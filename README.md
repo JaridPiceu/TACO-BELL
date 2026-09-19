@@ -6,8 +6,7 @@ Tensor Archive of Conformal Output - Best Ever Lattice Labour
 A lightweight, file-based database for CFT data extracted from
 Tensor Network Renormalization (TNR) calculations of the φ⁴ model in 2D.
 
-Designed for use with [TNRKit](https://github.com/…) and intended to live
-on GitHub alongside your calculations.
+Designed for use with [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/) and intended to live on GitHub alongside your calculations.
 
 ## Why this design?
 

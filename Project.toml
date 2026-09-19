@@ -1,0 +1,24 @@
+name = "TACOBELL"
+uuid = "b3feccf2-2e1b-4147-b9fa-b960214a59ef"
+authors = ["Jarid Piceu <jarid.piceu@ugent.be>"]
+version = "0.1.0"
+
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+
+[weakdeps]
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+
+[extensions]
+TACOBELLHDF5Ext = "HDF5"
+
+[compat]
+Dates = "1"
+HDF5 = "0.17"
+Printf = "1"
+TOML = "1"
+UUIDs = "1"
+julia = "1.9"

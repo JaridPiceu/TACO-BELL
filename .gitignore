@@ -1,0 +1,16 @@
+# Julia
+Manifest.toml
+/docs/build/
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# Raw TNRKit outputs — ingest these into db/ with ingest_jld2!, don't commit
+# the raw files themselves.
+*.jld2
+*.h5
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db

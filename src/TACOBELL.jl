@@ -9,13 +9,14 @@ calculations, designed for use alongside
 [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/).
 
 See the package README for a full walkthrough. The core entry points are
-[`insert_run!`](@ref), [`query_runs`](@ref), [`ingest_jld2!`](@ref)
-(requires `using HDF5`, see its docstring) and [`generate_catalog`](@ref)
-(regenerates the Markdown table for browsing on GitHub).
+[`insert_run!`](@ref), [`query_runs`](@ref), [`ingest_jld2!`](@ref),
+[`ingest_directory!`](@ref) and [`generate_catalog`](@ref) (regenerates the
+Markdown table for browsing on GitHub).
 """
 module TACOBELL
 
 using TOML, UUIDs, Dates, Printf
+using HDF5
 
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
 export insert_run!, query_runs, load_entry, get_iteration, summarize_db
@@ -287,7 +288,7 @@ function insert_run!(
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Public API — JLD2 ingestion (implemented by the HDF5 package extension)
+# Public API — JLD2 ingestion
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
@@ -300,16 +301,12 @@ The `params` argument supplies fields that are *not* stored inside the JLD2
 λ, iterations, normalization, central charge, scaling dimensions) is read
 from the file.
 
-!!! note "Requires HDF5.jl"
-    This method is provided by a package extension and only becomes
-    available once you `using HDF5` (JLD2 files are HDF5 containers under
-    the hood, so TACOBELL reads them directly with HDF5.jl to avoid a hard
-    dependency on JLD2.jl). Run `using Pkg; Pkg.add("HDF5")` once if you
-    don't already have it.
+JLD2 files are HDF5 containers, so this reads them directly with HDF5.jl
+rather than depending on JLD2.jl.
 
 # Example
 ```julia
-using TACOBELL, HDF5
+using TACOBELL
 
 params = RunParameters(
     model     = "phi4_complex",
@@ -321,7 +318,85 @@ params = RunParameters(
 ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
 ```
 """
-function ingest_jld2! end
+function ingest_jld2!(
+        filepath :: String,
+        params   :: RunParameters;
+        db_path  :: String  = DB_PATH(),
+        allow_duplicate :: Bool = false,
+    )
+    HDF5.h5open(filepath, "r") do f
+        chi    = Int(HDF5.read(f["chi"]))
+        K      = Int(HDF5.read(f["K"]))
+        mu0_sq = Float64(HDF5.read(f["μ0"]))
+        lambda = Float64(HDF5.read(f["λ"]))
+        t      = Float64(HDF5.read(f["t"]))
+
+        filled_params = RunParameters(
+            model     = params.model,
+            symmetry  = params.symmetry,
+            algorithm = params.algorithm,
+            chi       = chi,
+            K         = K,
+            mu0_sq    = mu0_sq,
+            lambda    = lambda,
+        )
+
+        data_refs = HDF5.read(f["data"])   # Vector of object references
+        iters = CFTResults[]
+
+        for (i, ref) in enumerate(data_refs)
+            step = i - 1   # 0-based iteration index
+            entry = f[ref][]
+
+            norm = Float64(entry["1"])
+
+            cc_ref = entry["2"]["central_charge"]
+            cc_re  = Float64(HDF5.read(f[cc_ref]["re"]))
+
+            sd     = entry["2"]["scaling_dimensions"]
+            sd_re  = Float64.(HDF5.read(f[sd["data"]]["re"]))
+
+            sectors = _parse_sectors(f, sd["structure"], sd_re)
+
+            push!(iters, CFTResults(
+                iteration      = step,
+                normalization  = norm,
+                central_charge = cc_re,
+                sectors        = sectors,
+            ))
+        end
+
+        insert_run!(filled_params, iters;
+                    db_path, allow_duplicate,
+                    source_file=basename(filepath),
+                    runtime_s=t)
+    end
+end
+
+# Parse the sector structure out of the JLD2 scaling_dimensions.structure field
+function _parse_sectors(f, struct_ref, all_dims::Vector{Float64})
+    struct_val = f[struct_ref][]
+    kvvec_ref  = struct_val["kvvec"]
+    kvvec      = f[kvvec_ref][]          # Vector of object references, one per sector
+
+    sectors = ScalingDimSector[]
+    for ref in kvvec
+        pair_val = f[ref][]              # named tuple: first=sector label, second=indices
+        first_ref  = pair_val["first"]
+        second_ref = pair_val["second"]
+
+        label     = f[first_ref][]
+        j_ref     = label["j"]
+        twice_j   = Int(f[j_ref][]["twice"])
+        s         = Int(label["s"])
+
+        indices   = Int.(f[second_ref][])   # 1-based into all_dims
+        dims      = isempty(indices) ? Float64[] : sort(all_dims[indices])
+
+        push!(sectors, ScalingDimSector(twice_j=twice_j, s=s, dims=dims))
+    end
+    return sectors
+end
 
 """
     ingest_directory!(dir; infer_params, db_path, extension=".jld2", allow_duplicate=false)
@@ -341,12 +416,9 @@ regenerated once at the end if anything new was inserted.
 
 Returns `(; total, inserted, skipped, failed)`.
 
-!!! note "Requires HDF5.jl"
-    Same extension as [`ingest_jld2!`](@ref) — `using HDF5` first.
-
 # Example
 ```julia
-using TACOBELL, HDF5
+using TACOBELL
 
 summary = ingest_directory!("data/loop_tnr_runs";
     infer_params = _ -> RunParameters(
@@ -356,7 +428,47 @@ summary = ingest_directory!("data/loop_tnr_runs";
 )
 ```
 """
-function ingest_directory! end
+function ingest_directory!(
+        dir :: String;
+        infer_params,
+        db_path     :: String  = DB_PATH(),
+        extension   :: String  = ".jld2",
+        allow_duplicate :: Bool = false,
+    )
+    files = String[]
+    for (root, _, fnames) in walkdir(dir)
+        for fn in fnames
+            endswith(lowercase(fn), lowercase(extension)) && push!(files, joinpath(root, fn))
+        end
+    end
+    sort!(files)
+    isempty(files) && @warn "No *$(extension) files found under $dir"
+
+    n_ok = n_skip = n_err = 0
+    for (i, filepath) in enumerate(files)
+        label = "[$i/$(length(files))] $(basename(filepath))"
+        try
+            params = infer_params(filepath)
+            ingest_jld2!(filepath, params; db_path, allow_duplicate)
+            n_ok += 1
+            @info "$label -> inserted"
+        catch err
+            if err isa ErrorException && startswith(err.msg, "Duplicate:")
+                n_skip += 1
+                @info "$label -> skipped (already in db)"
+            else
+                n_err += 1
+                @warn "$label -> FAILED" exception=(err, catch_backtrace())
+            end
+        end
+    end
+
+    n_ok > 0 && generate_catalog(; db_path)
+
+    summary = (total=length(files), inserted=n_ok, skipped=n_skip, failed=n_err)
+    @info "Bulk ingest complete" summary...
+    return summary
+end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API — reading

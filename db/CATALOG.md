@@ -2,23 +2,50 @@
 
 # TACO-BELL catalog
 
-16 run(s), last generated 2026-09-20T00:05:09.303.
+43 run(s), last generated 2026-09-20T01:19:22.279.
 
 | ID | model | symmetry | algorithm | χ | K | μ₀² | λ | iterations | c |
 |---|---|---|---|---|---|---|---|---|---|
-| [9d87fe03](runs/9d87fe03-be11-43a9-8450-3ec08295e903.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -2.0000 | 0.5000 | 31 | 1.0005 |
-| [6036132c](runs/6036132c-3611-4420-a32c-0ebbc808d1c5.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.9000 | 0.5000 | 31 | 1.0002 |
-| [0a09dd0d](runs/0a09dd0d-c0a6-4b7c-b02c-746feb517ea6.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.8000 | 0.5000 | 31 | 1.0003 |
-| [8d9feaf7](runs/8d9feaf7-c9b6-421f-8bac-e193b6e35602.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.7000 | 0.5000 | 31 | 1.0005 |
+| [9d87fe03](runs/9d87fe03-be11-43a9-8450-3ec08295e903.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -2.0000 | 0.5000 | 31 | 1.0002 |
+| [6036132c](runs/6036132c-3611-4420-a32c-0ebbc808d1c5.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.9000 | 0.5000 | 31 | 1.0004 |
+| [0a09dd0d](runs/0a09dd0d-c0a6-4b7c-b02c-746feb517ea6.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.8000 | 0.5000 | 31 | 1.0005 |
+| [8d9feaf7](runs/8d9feaf7-c9b6-421f-8bac-e193b6e35602.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.7000 | 0.5000 | 31 | 1.0006 |
 | [6d8dd364](runs/6d8dd364-edfc-4426-9de1-3151c2e31e04.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.6000 | 0.5000 | 31 | 1.0005 |
-| [225de5c1](runs/225de5c1-341d-4bac-801b-1594968a585d.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.5000 | 0.5000 | 31 | 1.0006 |
-| [73fbc66d](runs/73fbc66d-f0fd-4479-96c1-1cb1967e15cb.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.4000 | 0.5000 | 31 | 0.9998 |
-| [481d2635](runs/481d2635-12de-46fc-9ba6-db90aae12476.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.3000 | 0.5000 | 31 | 0.9998 |
-| [f1e55593](runs/f1e55593-c374-4589-9785-15c19c80c0d7.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.2000 | 0.5000 | 31 | 1.0004 |
-| [998cd4e8](runs/998cd4e8-3926-415d-a0c3-a98af11496da.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.1000 | 0.5000 | 31 | 1.0001 |
-| [83976ba2](runs/83976ba2-91be-4bca-afa6-2c3b68431c56.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.0000 | 0.5000 | 31 | 0.0000 |
+| [225de5c1](runs/225de5c1-341d-4bac-801b-1594968a585d.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.5000 | 0.5000 | 31 | 1.0005 |
+| [73fbc66d](runs/73fbc66d-f0fd-4479-96c1-1cb1967e15cb.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.4000 | 0.5000 | 31 | 0.9999 |
+| [481d2635](runs/481d2635-12de-46fc-9ba6-db90aae12476.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.3000 | 0.5000 | 31 | 1.0000 |
+| [f1e55593](runs/f1e55593-c374-4589-9785-15c19c80c0d7.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.2000 | 0.5000 | 31 | 1.0001 |
+| [998cd4e8](runs/998cd4e8-3926-415d-a0c3-a98af11496da.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.1000 | 0.5000 | 31 | 1.0003 |
+| [83976ba2](runs/83976ba2-91be-4bca-afa6-2c3b68431c56.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -1.0000 | 0.5000 | 31 | -0.0000 |
 | [bfaace38](runs/bfaace38-b2d3-4433-abd3-c39737ede6ec.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.9000 | 0.5000 | 31 | -0.0000 |
-| [680881c5](runs/680881c5-b7bb-4328-9f94-099f1804f4eb.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.8000 | 0.5000 | 31 | 0.0000 |
-| [c1bf2596](runs/c1bf2596-7166-4085-a412-6f2d7239d9ab.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.7000 | 0.5000 | 31 | 0.0000 |
+| [680881c5](runs/680881c5-b7bb-4328-9f94-099f1804f4eb.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.8000 | 0.5000 | 31 | -0.0000 |
+| [c1bf2596](runs/c1bf2596-7166-4085-a412-6f2d7239d9ab.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.7000 | 0.5000 | 31 | -0.0000 |
 | [8061c8f0](runs/8061c8f0-a0e8-4587-84e0-892c327b8b3f.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.6000 | 0.5000 | 31 | -0.0000 |
 | [6d40ca82](runs/6d40ca82-a96e-4ef7-8f92-14125106fcb2.toml) | phi4_complex | O(2) | LoopTNR | 32 | 12 | -0.5000 | 0.5000 | 31 | -0.0000 |
+| [ee08f5d8](runs/ee08f5d8-524f-47ef-b566-8d5fc24e07c7.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -2.0000 | 0.5000 | 31 | 1.0002 |
+| [be717443](runs/be717443-5378-40c2-ac2e-781922a0e830.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.9000 | 0.5000 | 31 | 1.0004 |
+| [9ab3f92c](runs/9ab3f92c-a6eb-4c02-91e4-8cc303066591.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.8000 | 0.5000 | 31 | 1.0005 |
+| [8928c0f9](runs/8928c0f9-61ad-4674-9d7a-75ea7366c8a2.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.7000 | 0.5000 | 31 | 1.0005 |
+| [78c8279b](runs/78c8279b-33de-4b9b-8bdf-17561605cf05.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.6000 | 0.5000 | 31 | 1.0005 |
+| [bba6ca6b](runs/bba6ca6b-530b-4396-96bc-f40b6bf72259.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.5000 | 0.5000 | 31 | 1.0005 |
+| [67420c1c](runs/67420c1c-f39e-45ec-97d6-94005a8d34ce.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.4000 | 0.5000 | 31 | 1.0002 |
+| [db636ef9](runs/db636ef9-ecf0-403f-a5e0-1b20a6b8790e.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.3000 | 0.5000 | 31 | 1.0001 |
+| [8a0da0fc](runs/8a0da0fc-5212-4e7d-b599-0c6e57470e04.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.2000 | 0.5000 | 31 | 1.0002 |
+| [770f5a54](runs/770f5a54-4c24-44de-a6d3-37dcec636c66.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -1.1000 | 0.5000 | 31 | 1.0004 |
+| [a7f6136c](runs/a7f6136c-f751-4b96-9e1e-d815c534783a.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -0.9000 | 0.5000 | 31 | -0.0000 |
+| [3caae6c1](runs/3caae6c1-eed2-4f8a-a20b-7fc507085c1f.toml) | phi4_complex | U(1) | LoopTNR | 32 | 10 | -0.5000 | 0.5000 | 31 | 0.0000 |
+| [04c9f313](runs/04c9f313-a59e-49c3-9cb8-1853d84ff50c.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -2.0000 | 0.5000 | 31 | 1.0002 |
+| [b3c75de3](runs/b3c75de3-8166-4eca-abb9-7fe9166a5358.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.9000 | 0.5000 | 31 | 1.0004 |
+| [a24bb0e1](runs/a24bb0e1-6b8a-4084-bf7e-e0761f3c2483.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.8000 | 0.5000 | 31 | 1.0005 |
+| [613bc03e](runs/613bc03e-b4f0-4160-a56e-3cc46dea7810.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.7000 | 0.5000 | 31 | 1.0006 |
+| [8c98cac7](runs/8c98cac7-b7dc-46ef-b578-d5b0ce79592e.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.6000 | 0.5000 | 21 | 1.0005 |
+| [73e97d40](runs/73e97d40-f8af-4138-ad75-5197fc46dd4f.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.5000 | 0.5000 | 21 | 1.0003 |
+| [1f2767f1](runs/1f2767f1-b230-4e80-8d4c-c9a7991f6b35.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.4000 | 0.5000 | 21 | 1.0002 |
+| [3da89394](runs/3da89394-5cb8-4aa8-a95d-e44800a6106b.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.3000 | 0.5000 | 21 | 1.0002 |
+| [b4cfc5be](runs/b4cfc5be-42ab-499b-9a7a-e1094a0610ad.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.2000 | 0.5000 | 21 | 1.0001 |
+| [af7365ca](runs/af7365ca-23ad-4063-b486-e37021d69744.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.1000 | 0.5000 | 21 | 1.0008 |
+| [7d4d0acd](runs/7d4d0acd-8d1b-4826-a0b1-4f923190b2c0.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -1.0000 | 0.5000 | 31 | 0.0000 |
+| [1e6a3249](runs/1e6a3249-3af7-438d-8596-ea1afed30ecd.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -0.9000 | 0.5000 | 21 | -0.0000 |
+| [49df00cd](runs/49df00cd-e6b2-4522-bc39-e90ad8771a69.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -0.7000 | 0.5000 | 21 | 0.0000 |
+| [29cfee69](runs/29cfee69-d635-489d-b9e6-789f5ab3c2e8.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -0.6000 | 0.5000 | 21 | -0.0000 |
+| [ee1326fb](runs/ee1326fb-8386-491b-8738-f626cc7ca90c.toml) | phi4_complex | U(1) | LoopTNR | 32 | 12 | -0.5000 | 0.5000 | 21 | -0.0000 |

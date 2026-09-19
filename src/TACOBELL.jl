@@ -21,7 +21,7 @@ using HDF5
 
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
 export insert_run!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
-export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!
+export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!, correct_field!
 export ingest_jld2!, ingest_directory!, generate_catalog, export_csv
 export central_charge_trajectory, plateau_estimate, plateau_central_charge
 
@@ -57,17 +57,27 @@ end
 """
     ScalingDimSector
 
-The scaling dimensions within one symmetry sector, labelled by
-the TensorKit fusion-tree quantum numbers `(j, s)`.
+The scaling dimensions within one symmetry sector, i.e. one fusion-tree
+charge/irrep. Storage is **symmetry-agnostic**: `charge` holds whatever
+quantum number(s) TensorKit's own charge/irrep type carries for that
+symmetry, keyed by the same field names TensorKit itself uses for that
+irrep type — so this works unchanged for `Trivial`, `U(1)`, `Z_N`, `SU(2)`,
+`O(2)`, or anything else TensorKit can label a sector with.
 
-- `twice_j` : twice the SU(2) / O(2) spin label `j`  (so `j = twice_j/2`)
-- `s`       : second quantum number as stored (sector index, Z₂ charge, …)
-- `dims`    : vector of scaling dimensions Δ in this sector, sorted ascending
+- `charge` : `Dict{String,Float64}` of the sector's quantum number(s), e.g.
+             `Dict("charge"=>1.0)` for `U1Irrep`, `Dict("n"=>1.0)` for a
+             `ZNIrrep`, `Dict("j"=>0.5)` for `SU2Irrep`, or
+             `Dict("j"=>1.0, "s"=>2.0)` for `CU1Irrep` (= O(2)). Empty for
+             the trivial (no-symmetry) sector.
+- `dims`   : vector of scaling dimensions Δ in this sector, sorted ascending
+
+Values that are half-integers (as `j` commonly is) are stored as their
+actual numeric value (e.g. `0.5`), not doubled — use [`find_sector`](@ref)
+with the real value.
 """
 Base.@kwdef struct ScalingDimSector
-    twice_j :: Int
-    s       :: Int
-    dims    :: Vector{Float64}
+    charge :: Dict{String, Float64} = Dict{String, Float64}()
+    dims   :: Vector{Float64}
 end
 
 """
@@ -81,8 +91,6 @@ Fields
 - `normalization`   : log of the per-site tensor norm at this step
 - `central_charge`  : extracted central charge `c`
 - `sectors`         : scaling dimensions grouped by symmetry sector
-- `free_energy`     : free energy per site (optional)
-- `correlation_len` : correlation length in lattice units (optional)
 - `notes`           : free-text annotation
 
 Also exposes a derived `.dims` property: all scaling dimensions across every
@@ -97,8 +105,6 @@ Base.@kwdef struct CFTResults
     normalization   :: Float64
     central_charge  :: Union{Float64, Missing}              = missing
     sectors         :: Vector{ScalingDimSector}             = ScalingDimSector[]
-    free_energy     :: Union{Float64, Missing}              = missing
-    correlation_len :: Union{Float64, Missing}              = missing
     notes           :: String                               = ""
 end
 
@@ -138,12 +144,25 @@ function Base.show(io::IO, p::RunParameters)
           ", χ=", p.chi, ", K=", p.K, ", μ₀²=", p.mu0_sq, ", λ=", p.lambda, ")")
 end
 
+# Print a half-integer charge as "1/2" rather than "0.5", matching how
+# physicists write spins/charges by hand; falls back to the plain number
+# for anything that isn't an integer or half-integer.
+function _fmt_charge(v::Real)
+    isinteger(v) && return string(Int(v))
+    twice = 2v
+    isinteger(twice) && return string(Int(round(twice)), "/2")
+    return string(v)
+end
+
+_charge_str(charge::Dict{String,Float64}) =
+    isempty(charge) ? "trivial" :
+        join(("$k=$(_fmt_charge(v))" for (k, v) in sort(collect(charge))), ", ")
+
 function Base.show(io::IO, s::ScalingDimSector)
-    j_str = iseven(s.twice_j) ? string(s.twice_j ÷ 2) : string(s.twice_j, "/2")
     if isempty(s.dims)
-        print(io, "ScalingDimSector(j=", j_str, ", s=", s.s, ", 0 dims)")
+        print(io, "ScalingDimSector(", _charge_str(s.charge), ", 0 dims)")
     else
-        print(io, "ScalingDimSector(j=", j_str, ", s=", s.s, ", ", length(s.dims),
+        print(io, "ScalingDimSector(", _charge_str(s.charge), ", ", length(s.dims),
               " dims, Δ∈[", @sprintf("%.4f", first(s.dims)), ", ", @sprintf("%.4f", last(s.dims)), "])")
     end
 end
@@ -171,11 +190,17 @@ end
 DB_PATH() = joinpath(@__DIR__, "..", "db")
 
 function _sector_to_dict(sec::ScalingDimSector)
-    Dict("twice_j" => sec.twice_j, "s" => sec.s, "dims" => sec.dims)
+    Dict("charge" => sec.charge, "dims" => sec.dims)
 end
 
 function _sector_from_dict(d)
-    ScalingDimSector(twice_j=d["twice_j"], s=d["s"], dims=Float64.(d["dims"]))
+    if haskey(d, "charge")
+        charge = Dict{String,Float64}(String(k) => Float64(v) for (k, v) in d["charge"])
+    else
+        # Pre-generalization files only ever stored O(2) sectors as (twice_j, s).
+        charge = Dict{String,Float64}("j" => d["twice_j"] / 2, "s" => Float64(d["s"]))
+    end
+    ScalingDimSector(charge=charge, dims=Float64.(d["dims"]))
 end
 
 function _results_to_dict(r::CFTResults)
@@ -185,9 +210,7 @@ function _results_to_dict(r::CFTResults)
         "notes"         => r.notes,
         "sectors"       => [_sector_to_dict(s) for s in r.sectors],
     )
-    r.central_charge  === missing || (d["central_charge"]  = r.central_charge)
-    r.free_energy     === missing || (d["free_energy"]     = r.free_energy)
-    r.correlation_len === missing || (d["correlation_len"] = r.correlation_len)
+    r.central_charge === missing || (d["central_charge"] = r.central_charge)
     d
 end
 
@@ -197,8 +220,6 @@ function _results_from_dict(d)
         normalization   = d["normalization"],
         central_charge  = get(d, "central_charge",  missing),
         sectors         = [_sector_from_dict(s) for s in get(d, "sectors", [])],
-        free_energy     = get(d, "free_energy",     missing),
-        correlation_len = get(d, "correlation_len", missing),
         notes           = get(d, "notes", ""),
     )
 end
@@ -270,11 +291,12 @@ function _save_index(entries, db_path=DB_PATH())
 end
 
 function _best_c(iters::Vector{CFTResults})
-    # Return the central charge at the last iteration that has one
-    for r in reverse(iters)
-        r.central_charge === missing || return r.central_charge
-    end
-    return NaN
+    # The literal last iteration can be numerically unstable (finite-χ
+    # truncation error compounding under the RG flow), so use the flattest
+    # plateau rather than trusting it blindly — see plateau_estimate.
+    traj = Float64[r.central_charge for r in sort(iters, by = r -> r.iteration) if r.central_charge !== missing]
+    isempty(traj) && return NaN
+    return plateau_estimate(traj).value
 end
 
 function _index_row(e::DatabaseEntry)
@@ -349,34 +371,47 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    ingest_jld2!(filepath, params; db_path, allow_duplicate)
+    ingest_jld2!(filepath, model; symmetry="", algorithm="", db_path, allow_duplicate)
+    ingest_jld2!(filepath, params::RunParameters; db_path, allow_duplicate)
 
 Read a JLD2 output file produced by TNRKit and insert it into the database.
 
-`params` supplies the one field that is never stored inside the JLD2:
-`model` (`"phi4_real"` / `"phi4_complex"`). Newer TNRKit output also stores
-`symmetry` and `algorithm` directly, in which case those are read from the
-file and whatever you pass in `params` for them is ignored — pass
-placeholders for older files that predate this. Everything else (χ, K, μ₀²,
-λ, iterations, normalization, central charge, scaling dimensions) is always
-read from the file.
+The simple form only needs `model` (`"phi4_real"` / `"phi4_complex"`) — the
+one field that's never stored inside the JLD2:
+
+```julia
+using TACOBELL
+ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", "phi4_complex")
+```
+
+Newer TNRKit output also stores `symmetry`/`algorithm` directly, in which
+case those are read from the file; pass them as keywords only as a fallback
+for older files that predate this. Everything else (χ, K, μ₀², λ,
+iterations, normalization, central charge, scaling dimensions) is always
+read from the file, regardless of which symmetry it used.
+
+The `RunParameters` form does the same thing but takes a full struct
+instead — mainly useful when you already have one on hand, e.g. from
+[`ingest_directory!`](@ref)'s `infer_params`.
 
 JLD2 files are HDF5 containers, so this reads them directly with HDF5.jl
 rather than depending on JLD2.jl.
-
-# Example
-```julia
-using TACOBELL
-
-params = RunParameters(
-    model     = "phi4_complex",
-    symmetry  = "",   # overwritten from file if present
-    algorithm = "",   # overwritten from file if present
-    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,  # always overwritten from file
-)
-ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
-```
 """
+function ingest_jld2!(
+        filepath :: String,
+        model    :: AbstractString;
+        symmetry :: AbstractString = "",
+        algorithm :: AbstractString = "",
+        db_path  :: String  = DB_PATH(),
+        allow_duplicate :: Bool = false,
+    )
+    params = RunParameters(
+        model=String(model), symmetry=String(symmetry), algorithm=String(algorithm),
+        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
+    )
+    ingest_jld2!(filepath, params; db_path, allow_duplicate)
+end
+
 function ingest_jld2!(
         filepath :: String,
         params   :: RunParameters;
@@ -453,7 +488,21 @@ function _field(x, key::AbstractString)
     return x[key]
 end
 
-# Parse the sector structure out of the JLD2 scaling_dimensions.structure field
+# TensorKit charge/irrep types encode a value either as a plain number (e.g.
+# ZNIrrep's `n`) or, for half-integer quantum numbers (spins, U(1)/O(2)
+# charges — HalfInt from HalfIntegers.jl), as the doubled integer under a
+# `twice` field. This detects the latter structurally (by field name, not by
+# which symmetry it belongs to) and returns the real value either way.
+function _charge_component(x)
+    hasfield(typeof(x), :twice) && return getfield(x, :twice) / 2
+    return Float64(x)
+end
+
+# Parse the sector structure out of the JLD2 scaling_dimensions.structure
+# field. Symmetry-agnostic: reads whatever fields the sector's charge/irrep
+# label actually has (e.g. `charge` for U1Irrep, `n` for a ZNIrrep, `j`+`s`
+# for CU1Irrep/O(2), none at all for Trivial) via reflection, rather than
+# assuming a fixed (j, s)-shaped schema.
 function _parse_sectors(f, struct_ref, all_dims::Vector{Float64})
     struct_val = f[struct_ref][]
     kvvec_ref  = _field(struct_val, "kvvec")
@@ -465,17 +514,18 @@ function _parse_sectors(f, struct_ref, all_dims::Vector{Float64})
         label      = _field(pair_val, "first")   # sector label is stored inline, not a Reference
         second_ref = _field(pair_val, "second")  # indices vector IS a Reference
 
-        j_val   = _field(label, "j")     # also stored inline
-        twice_j = Int(_field(j_val, "twice"))
-        s       = Int(_field(label, "s"))
+        charge = Dict{String, Float64}(
+            String(name) => _charge_component(getfield(label, name))
+            for name in propertynames(label)
+        )
 
-        indices   = Int.(f[second_ref][])   # 1-based into all_dims
+        indices = Int.(f[second_ref][])   # 1-based into all_dims
         isempty(indices) && continue   # nothing found in this sector — same information as
                                         # "sector absent", so skip storing it (files have
                                         # dozens of these; they're most of the file size)
         dims = sort(all_dims[indices])
 
-        push!(sectors, ScalingDimSector(twice_j=twice_j, s=s, dims=dims))
+        push!(sectors, ScalingDimSector(charge=charge, dims=dims))
     end
     return sectors
 end
@@ -484,12 +534,13 @@ end
     ingest_directory!(dir; infer_params, db_path, extension=".jld2", allow_duplicate=false)
 
 Recursively ingest every matching file under `dir` (hundreds of files is the
-intended use case). `infer_params` is a function `filepath -> RunParameters`
-supplying the fields not stored in the file (`model`, `symmetry`,
-`algorithm`) for that particular file — pass a closure that returns the same
-`RunParameters` for every call if a whole directory shares one setup, or
-inspect `filepath` (e.g. with a regex on its filename or parent folder) if
-different files need different labels.
+intended use case). `infer_params` is a function `filepath -> model`
+returning just the model name for that file — the same one thing
+[`ingest_jld2!`](@ref) needs — or, for finer control, a full
+`RunParameters` (e.g. to force `symmetry`/`algorithm` for older files that
+predate those being stored in the JLD2). Pass a closure that always returns
+the same value if the whole directory shares one model, or inspect
+`filepath` (e.g. a regex on its filename or parent folder) if it doesn't.
 
 A file that is already in the database is skipped and counted, not treated
 as an error. A file that fails to read or parse is logged with `@warn` and
@@ -502,12 +553,7 @@ Returns `(; total, inserted, skipped, failed)`.
 ```julia
 using TACOBELL
 
-summary = ingest_directory!("data/loop_tnr_runs";
-    infer_params = _ -> RunParameters(
-        model="phi4_complex", symmetry="O(2)", algorithm="LoopTNR",
-        chi=0, K=0, mu0_sq=0.0, lambda=0.0,   # overwritten from each file
-    ),
-)
+summary = ingest_directory!("data/loop_tnr_runs"; infer_params = _ -> "phi4_complex")
 ```
 """
 function ingest_directory!(
@@ -640,15 +686,27 @@ the answer" shortcut, equivalent to
 final_iteration(entry::DatabaseEntry) = argmax(r -> r.iteration, entry.iterations)
 
 """
-    find_sector(result, twice_j, s) -> Union{ScalingDimSector, Nothing}
+    find_sector(result; charge...) -> Union{ScalingDimSector, Nothing}
 
 Look up one symmetry sector's scaling dimensions from a single iteration's
-result by its `(twice_j, s)` label, or `nothing` if that sector wasn't
-populated at this iteration.
+result by its charge/irrep label, given as keywords matching whatever
+quantum number(s) that symmetry uses — the same names shown by `sec.charge`
+or by printing a `ScalingDimSector`. All components must be given. Returns
+`nothing` if no sector matches (including "wasn't populated at this
+iteration" — see [`ScalingDimSector`](@ref)).
+
+# Example
+```julia
+find_sector(result; charge=1)         # U(1): "charge" is U1Irrep's field name
+find_sector(result; n=1)              # Z_N: "n" is ZNIrrep's field name
+find_sector(result; j=1, s=2)         # O(2) / CU1Irrep
+find_sector(result)                   # Trivial (no symmetry): no keywords
+```
 """
-function find_sector(result::CFTResults, twice_j::Int, s::Int)
+function find_sector(result::CFTResults; charge...)
+    query = Dict{String, Float64}(String(k) => Float64(v) for (k, v) in charge)
     for sec in result.sectors
-        sec.twice_j == twice_j && sec.s == s && return sec
+        sec.charge == query && return sec
     end
     return nothing
 end
@@ -759,6 +817,50 @@ function rebuild_index!(; db_path::String = DB_PATH())
     @info "Rebuilt index: $(length(idx)) entries"
 end
 
+"""
+    correct_field!(field, old, new; db_path) -> Int
+
+Fix a typo (or rename a value) in one `RunParameters` field across every
+matching entry already in the database, in place — same `id`, same file,
+only that field changes. `field` is `:model`, `:symmetry`, or `:algorithm`.
+Rebuilds `index.toml` and regenerates `db/CATALOG.md` afterward if anything
+changed. Returns the number of entries fixed.
+
+# Example
+```julia
+correct_field!(:model, "phi_complex", "phi4_complex")
+```
+"""
+function correct_field!(field::Symbol, old, new; db_path::String = DB_PATH())
+    field in (:model, :symmetry, :algorithm) ||
+        error("correct_field! only supports :model, :symmetry, or :algorithm, got :$field")
+
+    n = 0
+    for row in _load_index(db_path)
+        row[String(field)] == old || continue
+        entry = load_entry(row["id"]; db_path)
+        fixed_params = RunParameters(;
+            (k => (k === field ? new : getfield(entry.params, k))
+             for k in fieldnames(RunParameters))...
+        )
+        fixed_entry = DatabaseEntry(;
+            id=entry.id, created_at=entry.created_at, source_file=entry.source_file,
+            runtime_s=entry.runtime_s, params=fixed_params, iterations=entry.iterations,
+        )
+        open(joinpath(db_path, "runs", entry.id * ".toml"), "w") do io
+            TOML.print(io, _entry_to_dict(fixed_entry))
+        end
+        n += 1
+    end
+
+    if n > 0
+        rebuild_index!(; db_path)
+        generate_catalog(; db_path)
+    end
+    @info "correct_field!" field old new fixed=n
+    return n
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API — inspection
 # ─────────────────────────────────────────────────────────────────────────────
@@ -851,17 +953,25 @@ way to get everything in a single ~hundreds-of-KB run file into a flat
 table for plotting or analysis outside Julia. Returns the path written.
 """
 function export_csv(entry::DatabaseEntry; out::String = first(entry.id, 8) * ".csv")
+    # Column names for the charge/irrep quantum number(s) depend on the
+    # symmetry (e.g. "j","s" for O(2); "charge" for U(1); "n" for Z_N) —
+    # collect whichever ones actually appear so this works for any symmetry.
+    charge_keys = sort(unique(k for r in entry.iterations for sec in r.sectors for k in keys(sec.charge)))
+
     io = IOBuffer()
     println(io, _csv_row((
-        "iteration", "normalization", "central_charge", "twice_j", "s", "dim_index", "delta",
+        "iteration", "normalization", "central_charge", charge_keys..., "dim_index", "delta",
     )))
     for r in sort(entry.iterations, by = x -> x.iteration)
         cc = r.central_charge === missing ? missing : r.central_charge
         if isempty(r.sectors)
-            println(io, _csv_row((r.iteration, r.normalization, cc, missing, missing, missing, missing)))
+            println(io, _csv_row((r.iteration, r.normalization, cc, fill(missing, length(charge_keys))..., missing, missing)))
         end
-        for sec in r.sectors, (i, d) in enumerate(sec.dims)
-            println(io, _csv_row((r.iteration, r.normalization, cc, sec.twice_j, sec.s, i, d)))
+        for sec in r.sectors
+            charge_vals = (get(sec.charge, k, missing) for k in charge_keys)
+            for (i, d) in enumerate(sec.dims)
+                println(io, _csv_row((r.iteration, r.normalization, cc, charge_vals..., i, d)))
+            end
         end
     end
     write(out, String(take!(io)))

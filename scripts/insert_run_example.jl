@@ -21,8 +21,9 @@ iters = [
         iteration=20, normalization=0.693,
         central_charge=0.4998,
         sectors=[
-            ScalingDimSector(twice_j=0, s=0, dims=[0.0, 1.0, 2.0]),
-            ScalingDimSector(twice_j=2, s=1, dims=[0.125, 1.125]),
+            # Z2 sectors are labelled by TensorKit's ZNIrrep field name "n" (0 or 1).
+            ScalingDimSector(charge=Dict("n"=>0.0), dims=[0.0, 1.0, 2.0]),
+            ScalingDimSector(charge=Dict("n"=>1.0), dims=[0.125, 1.125]),
         ],
     ),
 ]

@@ -18,18 +18,13 @@ isempty(ARGS) && error("Usage: julia --project=. scripts/bulk_ingest.jl <directo
 data_dir = ARGS[1]
 isdir(data_dir) || error("Not a directory: $data_dir")
 
-# `symmetry`/`algorithm` are read from each file automatically when present
-# (recent TNRKit output has them) and the placeholders below are ignored.
-# `model` is never stored in the file, so set it for real — every file under
-# `data_dir` is assumed here to share one model. If your directory mixes
-# several models, inspect `filepath` instead (e.g. a regex on
-# `basename(filepath)` or on the subfolder it lives in).
-infer_params(filepath) = RunParameters(
-    model     = "phi4_complex",
-    symmetry  = "",
-    algorithm = "",
-    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,  # overwritten from each file
-)
+# `symmetry`/`algorithm` and everything else are read from each file
+# automatically. `model` is never stored in the file, so it's the one thing
+# you set for real — every file under `data_dir` is assumed here to share
+# one model. If your directory mixes several models, inspect `filepath`
+# instead (e.g. a regex on `basename(filepath)` or on the subfolder it
+# lives in) and return a different model name per file.
+infer_params(filepath) = "phi4_complex"
 
 summary = ingest_directory!(data_dir; infer_params)
 

@@ -22,10 +22,10 @@ Designed for use with [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/) and 
 
 ```julia
 using Pkg
-Pkg.activate("path/to/CFTDatabase")
+Pkg.activate("path/to/TACOBELL")
 Pkg.instantiate()
 
-using CFTDatabase
+using TACOBELL
 ```
 
 ### Ingest a JLD2 file (recommended workflow)

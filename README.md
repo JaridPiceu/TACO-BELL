@@ -10,7 +10,9 @@ look it up later by its physical parameters, and export it for anyone
 
 There's no server and nothing to install beyond Julia packages: every run
 is just a plain text file in [`db/runs/`](db/runs/), tracked in this git
-repo. Designed for use with
+repo. Works for any manifest symmetry TensorKit supports (`Trivial`, `U(1)`,
+`Z_N`, `SU(2)`, `O(2)`, ...) — sector labels are read generically, not
+hardcoded to one symmetry. Designed for use with
 [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/).
 
 ## Install
@@ -34,19 +36,13 @@ using TACOBELL
 
 ### 1. Add a result
 
-From a TNRKit `.jld2` output file — the normal path:
+From a TNRKit `.jld2` output file — the normal path. `model` is the one
+thing you supply; everything else (χ, K, μ₀², λ, symmetry, algorithm, all
+iteration data) is read straight from the file:
 
 ```julia
 using TACOBELL
-
-# `model` is the one thing never stored in the JLD2 — set it for real.
-# symmetry/algorithm/chi/K/mu0_sq/lambda are placeholders: they get
-# overwritten from the file (symmetry/algorithm only if the file has them).
-params = RunParameters(
-    model = "phi4_complex", symmetry = "", algorithm = "",
-    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,
-)
-ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
+ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", "phi4_complex")
 ```
 
 Got hundreds of files in a folder? Point `ingest_directory!` at it instead —
@@ -74,18 +70,32 @@ julia> runs
  DatabaseEntry(8061c8f0…, phi4_complex/O(2)/LoopTNR, χ=32, K=12, μ₀²=-0.6, λ=0.5, 31 iters, c=-0.0000)
  ⋮
 
-julia> final_iteration(runs[1])
-CFTResults(iteration=30, norm=1.0000, c=-0.0000, 4/10 sectors populated)
+julia> fi = final_iteration(runs[1])
+CFTResults(iteration=30, norm=1.0000, c=-0.0000, 4/4 sectors populated)
 
-julia> find_sector(final_iteration(runs[1]), 2, 2)
-ScalingDimSector(j=1, s=2, 4 dims, Δ∈[1.2345, 5.6789])
+julia> fi.sectors
+4-element Vector{ScalingDimSector}:
+ ScalingDimSector(j=0, s=0, 35 dims, Δ∈[-0.0000, 8.3959])
+ ScalingDimSector(j=1, s=2, 31 dims, Δ∈[5.4419, 8.0624])
+ ScalingDimSector(j=0, s=1, 25 dims, Δ∈[6.0167, 8.3648])
+ ScalingDimSector(j=2, s=2, 17 dims, Δ∈[6.1429, 8.4344])
+
+julia> find_sector(fi; j=1, s=2)
+ScalingDimSector(j=1, s=2, 31 dims, Δ∈[5.4419, 8.0624])
+
+julia> fi.dims[1:3]   # all sectors flattened into one sorted list, like TNRKit's own indexing
+3-element Vector{Float64}:
+ -0.0
+  5.441933747711265
+  5.4514434554069
 ```
 
 The raw numbers are still all there underneath (`.central_charge`, `.dims`,
-etc.) — this only changes how they *print*. A run's literal last iteration
-can be numerically unstable (finite-χ truncation error compounding under
-the RG flow), so for a more robust "converged" estimate, run a window-based
-plateau search instead of trusting the last value blindly:
+`sec.charge`, etc.) — this only changes how they *print*. A run's literal
+last iteration can be numerically unstable (finite-χ truncation error
+compounding under the RG flow), so for a more robust "converged" estimate,
+run a window-based plateau search instead of trusting the last value
+blindly:
 
 ```julia
 plateau_central_charge(runs[1])
@@ -131,12 +141,7 @@ file that fails to read:
 ```julia
 using TACOBELL
 
-summary = ingest_directory!("data/loop_tnr_runs";
-    infer_params = _ -> RunParameters(
-        model="phi4_complex", symmetry="", algorithm="",
-        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
-    ),
-)
+summary = ingest_directory!("data/loop_tnr_runs"; infer_params = _ -> "phi4_complex")
 # summary == (total=.., inserted=.., skipped=.., failed=..)
 ```
 
@@ -174,6 +179,9 @@ backslashes.
 | `mu0_sq` | Float64 | Bare mass squared μ₀² |
 | `lambda` | Float64 | Quartic coupling λ |
 
+When ingesting from a JLD2 file, every field except `model` is a
+placeholder that gets overwritten — see [`ingest_jld2!`](src/TACOBELL.jl).
+
 ### `CFTResults` (per iteration)
 
 | Field | Type | Description |
@@ -182,24 +190,39 @@ backslashes.
 | `normalization` | Float64 | Per-site tensor norm at this step |
 | `central_charge` | Float64? | Extracted central charge *c* |
 | `sectors` | `Vector{ScalingDimSector}` | Scaling dims grouped by symmetry sector |
-| `free_energy` | Float64? | Free energy per site (optional) |
-| `correlation_len` | Float64? | Correlation length in lattice units (optional) |
 | `notes` | String | Free-text annotation |
+| `.dims` *(derived)* | `Vector{Float64}` | All sectors' Δ flattened into one sorted list |
 
-### `ScalingDimSector`
+### `ScalingDimSector` — symmetry-agnostic sector labels
 
-Each sector is labelled by the TensorKit fusion-tree quantum numbers `(j, s)`:
+Each sector is labelled by a `charge::Dict{String,Float64}` holding
+whatever quantum number(s) TensorKit's own charge/irrep type uses for that
+symmetry — the same field names TensorKit itself uses, so this needs no
+changes to support a new symmetry:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `twice_j` | Int | `2j` (integer), so `j = twice_j/2` |
-| `s` | Int | Second quantum number (Z₂ charge or sector index) |
-| `dims` | `Vector{Float64}` | Scaling dimensions Δ in this sector, sorted ascending |
+| Symmetry | TensorKit type | `charge` keys |
+|----------|-----------------|---------------|
+| none | `Trivial` | `{}` (empty) |
+| U(1) | `U1Irrep` | `charge` |
+| Z_N | `ZNIrrep{N}` | `n` |
+| SU(2) | `SU2Irrep` | `j` |
+| O(2) | `CU1Irrep` | `j`, `s` |
 
-For O(2) symmetry as used in this example: `j` is the O(2) angular momentum
-and `s` distinguishes different irrep types. Sectors where nothing
-converged aren't stored at all (an absent sector means the same thing as an
-empty one, and TNR output can have dozens of these per iteration).
+Half-integer values (spins, U(1)/O(2) charges) are stored as their real
+value (e.g. `0.5`), not doubled. Look a sector up with
+[`find_sector`](src/TACOBELL.jl), passing the same keyword names:
+
+```julia
+find_sector(fi; j=1, s=2)   # O(2)
+find_sector(fi; charge=1)   # U(1)
+find_sector(fi; n=1)        # Z_N
+find_sector(fi)             # Trivial — no keywords
+```
+
+`dims::Vector{Float64}` holds the scaling dimensions Δ in that sector,
+sorted ascending. Sectors where nothing converged aren't stored at all (an
+absent sector means the same thing as an empty one, and TNR output can have
+dozens of these per iteration).
 
 ### Database layout
 
@@ -248,13 +271,15 @@ resolution — they're independent by construction.
 
 `ingest_jld2!` reads TNRKit's `.jld2` output directly with `HDF5.jl` (JLD2
 files are HDF5 containers, so no extra `JLD2.jl` dependency is needed). It
-currently expects the key layout of the reference example file (`chi`, `K`,
-`μ0`, `λ`, `t`, optionally `symmetry`/`algorithm`, and a `data` array of
-per-iteration records with `central_charge` and `scaling_dimensions`
-grouped by the TensorKit fusion-tree sector `(j, s)`). If your TNRKit
-output differs, adjust `ingest_jld2!` and `_parse_sectors` in
-[`src/TACOBELL.jl`](src/TACOBELL.jl) to match — those are the only places
-that need to know about the on-disk structure.
+currently expects the key layout of the reference example files (`chi`,
+`K`, `μ0`, `λ`, `t`, optionally `symmetry`/`algorithm`, and a `data` array
+of per-iteration records with `central_charge` and `scaling_dimensions`).
+Sector labels themselves are read generically via reflection (see
+[ScalingDimSector](#scalingdimsector--symmetry-agnostic-sector-labels)
+above), so a new *symmetry* needs no code change — but if your TNRKit
+output uses different top-level key *names* entirely, adjust `ingest_jld2!`
+in [`src/TACOBELL.jl`](src/TACOBELL.jl) to match; that's the only place
+that needs to know about the on-disk structure.
 
 ### Running the tests
 

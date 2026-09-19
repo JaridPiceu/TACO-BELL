@@ -1,6 +1,5 @@
 using Test
 using TACOBELL
-using HDF5   # activates the ingest_jld2!/ingest_directory! extension
 
 @testset "TACOBELL.jl" begin
 

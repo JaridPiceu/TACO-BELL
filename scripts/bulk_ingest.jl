@@ -13,7 +13,6 @@ Run from the repository root:
 """
 
 using TACOBELL
-using HDF5   # loads the ingest_jld2!/ingest_directory! extension
 
 isempty(ARGS) && error("Usage: julia --project=. scripts/bulk_ingest.jl <directory>")
 data_dir = ARGS[1]

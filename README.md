@@ -18,7 +18,7 @@ expensive run only ever needs to happen once.
 | One file per run | Clean history; each commit = one new result; trivial to share via PR |
 | Flat `index.toml` | Fast filtering without opening every run file |
 | Direct JLD2 ingest | One function call to go from TNRKit output to database entry |
-| HDF5 as a package extension | No hard dependency — `TACOBELL` loads instantly; `ingest_jld2!` becomes available the moment you `using HDF5` |
+| Reads JLD2 via HDF5.jl | JLD2 files are HDF5 containers; no extra `JLD2.jl` dependency needed |
 
 ## Installation
 
@@ -40,10 +40,8 @@ Pkg.instantiate()
 using TACOBELL
 ```
 
-Only the Julia standard library (`TOML`, `UUIDs`, `Dates`, `Printf`) is
-required for the core database. `HDF5.jl` is an optional dependency needed
-only for [`ingest_jld2!`](#ingest-a-jld2-file-recommended-workflow) — see
-below.
+Dependencies are the Julia standard library (`TOML`, `UUIDs`, `Dates`,
+`Printf`) plus `HDF5.jl`, used to read TNRKit's `.jld2` output files.
 
 ## Quick start
 
@@ -76,12 +74,10 @@ runnable version.
 
 ### Ingest a JLD2 file (recommended workflow)
 
-`ingest_jld2!` reads a TNRKit `.jld2` output directly with `HDF5.jl` (JLD2
-files are HDF5 containers, so no `JLD2.jl` dependency is needed). This
-method only exists once HDF5 is loaded:
+`ingest_jld2!` reads a TNRKit `.jld2` output directly with `HDF5.jl`:
 
 ```julia
-using TACOBELL, HDF5
+using TACOBELL
 
 # Supply only what is not stored in the JLD2: model, symmetry, algorithm.
 params = RunParameters(
@@ -94,7 +90,6 @@ params = RunParameters(
 entry = ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
 ```
 
-If `HDF5.jl` isn't installed yet, run `using Pkg; Pkg.add("HDF5")` once.
 See [`scripts/ingest_jld2_example.jl`](scripts/ingest_jld2_example.jl) for a
 runnable version:
 
@@ -102,13 +97,18 @@ runnable version:
 julia --project=. scripts/ingest_jld2_example.jl path/to/your/file.jld2
 ```
 
+> **Windows path tip:** write the path as a normal string, e.g.
+> `raw"C:\Users\you\data\file.jld2"` or `"C:/Users/you/data/file.jld2"`.
+> `r"..."` is a *regex* literal in Julia (unlike Python), not a raw string —
+> using it for a Windows path will error on the backslashes.
+
 `ingest_jld2!` currently expects the HDF5 key layout used by the reference
 example file (`chi`, `K`, `μ0`, `λ`, `t`, and a `data` array of per-iteration
 records with `central_charge` and `scaling_dimensions` grouped by the
 `TensorKit` fusion-tree sector `(j, s)`). If your TNRKit output uses
-different key names, adjust
-[`ext/TACOBELLHDF5Ext.jl`](ext/TACOBELLHDF5Ext.jl) to match — that's the only
-file that needs to know about the on-disk JLD2 structure.
+different key names, adjust `ingest_jld2!` and `_parse_sectors` in
+[`src/TACOBELL.jl`](src/TACOBELL.jl) to match — those are the only places
+that need to know about the on-disk JLD2 structure.
 
 ### Query
 
@@ -136,7 +136,7 @@ file that fails to read — built for pointing at a folder of hundreds of
 TNRKit outputs at once:
 
 ```julia
-using TACOBELL, HDF5
+using TACOBELL
 
 summary = ingest_directory!("data/loop_tnr_runs";
     infer_params = _ -> RunParameters(

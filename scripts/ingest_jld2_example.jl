@@ -12,7 +12,6 @@ Run from the repository root:
 
 using Printf
 using TACOBELL
-using HDF5   # loads the ingest_jld2! extension
 
 filepath = length(ARGS) >= 1 ? ARGS[1] :
     "Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2"

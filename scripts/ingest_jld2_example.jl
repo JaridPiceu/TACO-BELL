@@ -2,9 +2,10 @@
 ingest_jld2_example.jl
 
 Shows how to ingest a TNRKit JLD2 output file into the database.
-The only things you need to supply manually are the three fields
-not stored inside the JLD2: model name, symmetry string, algorithm.
-Everything else (χ, K, μ₀², λ, all iteration data) is read from the file.
+`model` is the only thing you need to supply manually — it's never stored
+in the JLD2. `symmetry`/`algorithm` are read from the file when present
+(recent TNRKit output has them); everything else (χ, K, μ₀², λ, all
+iteration data) is always read from the file.
 
 Run from the repository root:
     julia --project=. scripts/ingest_jld2_example.jl path/to/your/file.jld2
@@ -23,13 +24,13 @@ if !isfile(filepath)
     exit(1)
 end
 
-# Provide the three fields that are not in the JLD2 file.
-# chi / K / mu0_sq / lambda are placeholders — they get overwritten from the file.
+# Only `model` truly needs a real value here; symmetry/algorithm/chi/K/
+# mu0_sq/lambda are all placeholders — overwritten from the file.
 params_template = RunParameters(
     model     = "phi4_complex",
-    symmetry  = "O(2)",
-    algorithm = "LoopTNR",
-    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,  # filled from file
+    symmetry  = "",
+    algorithm = "",
+    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,
 )
 
 entry = ingest_jld2!(filepath, params_template)

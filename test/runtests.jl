@@ -84,5 +84,13 @@ using TACOBELL
             hits = query_runs(; db_path=tmp, symmetry="Z2")
             @test length(hits) == 2
         end
+
+        @testset "generate_catalog" begin
+            out = generate_catalog(; db_path=tmp)
+            @test isfile(out)
+            text = read(out, String)
+            @test occursin("BTRG", text)
+            @test occursin("2 run(s)", text)
+        end
     end
 end

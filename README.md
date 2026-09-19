@@ -128,6 +128,16 @@ println(iter20.sectors)   # Vector{ScalingDimSector}
 best = find_closest(-1.9, 1.0; symmetry="O(2)", chi=16, algorithm="LoopTNR")
 ```
 
+### Browse without Julia
+
+After inserting new runs, regenerate the Markdown catalog so it's visible
+directly on GitHub:
+
+```julia
+generate_catalog()   # writes db/CATALOG.md
+```
+
+
 ## Parameter reference
 
 ### `RunParameters`
@@ -173,6 +183,7 @@ and `s ∈ {0,1,2}` distinguishes different irrep types
 ```
 db/
 ├── index.toml          ← lightweight summary of all runs (auto-managed)
+├── CATALOG.md           ← human-readable table for browsing on GitHub (auto-managed)
 └── runs/
     ├── <uuid>.toml     ← one file per run, all iterations inside
     └── …
@@ -180,25 +191,45 @@ db/
 
 The TOML format for a run uses TOML's `[[array of tables]]` syntax so each
 iteration block is self-contained and human-readable. Never edit `index.toml`
-by hand. If it gets out of sync after a merge, call `rebuild_index!()`.
+or `CATALOG.md` by hand — both are generated from the `runs/*.toml` files.
+
+`CATALOG.md` is what makes the database browsable without Julia: it's a
+plain Markdown table that GitHub renders on the repo page, with each row
+linking to its full `runs/<uuid>.toml` file. This repo is currently
+**private**, so "browsable by anyone" means anyone with access to it —
+switch the repo to public in GitHub's settings if you want it open to
+everyone.
 
 ## Sharing results / contributing
 
 Because every run is a single TOML file, contributing a new result is a
-one-file pull request:
+small, self-contained pull request:
 
 1. Ingest your run locally (`insert_run!` or `ingest_jld2!`) so a new
    `db/runs/<uuid>.toml` and an updated `db/index.toml` are created.
-2. Commit both files and open a PR.
+2. Regenerate the catalog and commit all three files:
+
+```julia
+using TACOBELL
+generate_catalog()
+```
+
+```
+git add db/runs/<uuid>.toml db/index.toml db/CATALOG.md
+git commit -m "Add run: <short description>"
+```
+
 3. If your branch was based on an older `main` and other runs were merged in
-   the meantime, resolve any conflict in `db/index.toml` by regenerating it:
+   the meantime, resolve any conflict in `db/index.toml` / `db/CATALOG.md`
+   by regenerating both instead of hand-editing the diff:
 
 ```julia
 using TACOBELL
 rebuild_index!()
+generate_catalog()
 ```
 
-then re-commit `db/index.toml`. Individual `db/runs/*.toml` files never need
+then re-commit those two files. Individual `db/runs/*.toml` files never need
 manual edits or conflict resolution — they're independent by construction.
 
 ## Running the tests

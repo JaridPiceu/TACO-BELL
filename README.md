@@ -2,27 +2,18 @@
 
 Tensor Archive of Conformal Output — Best Ever Lattice Labour
 
-A lightweight, file-based database for CFT data (central charges, scaling
-dimensions, ...) extracted from Tensor Network Renormalization (TNR)
-calculations of the φ⁴ model in 2D.
+A database for CFT data (central charges, scaling dimensions, ...) computed
+with Tensor Network Renormalization (TNR) for the φ⁴ model in 2D — built so
+that an expensive calculation only ever has to be run once. Add a result,
+look it up later by its physical parameters, and export it for anyone
+(Julia or not) to use.
 
-Designed for use with [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/)
-and intended to live on GitHub alongside your calculations, so that an
-expensive run only ever needs to happen once.
+There's no server and nothing to install beyond Julia packages: every run
+is just a plain text file in [`db/runs/`](db/runs/), tracked in this git
+repo. Designed for use with
+[TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/).
 
-## Why this design?
-
-| Choice | Reason |
-|--------|--------|
-| Plain TOML files | Human-readable, git-diffable, no server or binary blobs |
-| One file per run | Clean history; each commit = one new result; trivial to share via PR |
-| Flat `index.toml` | Fast filtering without opening every run file |
-| Direct JLD2 ingest | One function call to go from TNRKit output to database entry |
-| Reads JLD2 via HDF5.jl | JLD2 files are HDF5 containers; no extra `JLD2.jl` dependency needed |
-
-## Installation
-
-Clone the repository and activate it as a Julia environment:
+## Install
 
 ```julia
 using Pkg
@@ -30,151 +21,146 @@ Pkg.develop(path="path/to/TACO-BELL")   # or Pkg.add(url="https://github.com/<yo
 using TACOBELL
 ```
 
-or, working directly inside a checkout:
+Or, working directly inside a checkout of this repo:
 
 ```julia
 using Pkg
 Pkg.activate("path/to/TACO-BELL")
 Pkg.instantiate()
-
 using TACOBELL
 ```
 
-Dependencies are the Julia standard library (`TOML`, `UUIDs`, `Dates`,
-`Printf`) plus `HDF5.jl`, used to read TNRKit's `.jld2` output files.
+## The three things you'll do
 
-## Quick start
+### 1. Add a result
 
-### Manual insertion
+From a TNRKit `.jld2` output file — the normal path:
 
 ```julia
 using TACOBELL
 
+# `model` is the one thing never stored in the JLD2 — set it for real.
+# symmetry/algorithm/chi/K/mu0_sq/lambda are placeholders: they get
+# overwritten from the file (symmetry/algorithm only if the file has them).
 params = RunParameters(
-    model="phi4_real", symmetry="Z2", algorithm="BTRG",
-    chi=24, K=30, mu0_sq=-0.2, lambda=1.0,
+    model = "phi4_complex", symmetry = "", algorithm = "",
+    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,
 )
-
-iters = [
-    CFTResults(
-        iteration=20, normalization=0.693,
-        central_charge=0.4998,
-        sectors=[
-            ScalingDimSector(twice_j=0, s=0, dims=[0.0, 1.0, 2.0]),
-            ScalingDimSector(twice_j=2, s=1, dims=[0.125, 1.125]),
-        ],
-    ),
-]
-
-insert_run!(params, iters)
+ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
 ```
 
-See [`scripts/insert_run_example.jl`](scripts/insert_run_example.jl) for a
-runnable version.
+Got hundreds of files in a folder? Point `ingest_directory!` at it instead —
+see [Bulk ingestion](#bulk-ingestion-hundreds-of-files) below. Building the
+`CFTResults`/`RunParameters` yourself instead of from a file also works —
+see [`scripts/insert_run_example.jl`](scripts/insert_run_example.jl).
 
-### Ingest a JLD2 file (recommended workflow)
-
-`ingest_jld2!` reads a TNRKit `.jld2` output directly with `HDF5.jl`:
+### 2. Look it up
 
 ```julia
 using TACOBELL
 
-# Supply only what is not stored in the JLD2: model, symmetry, algorithm.
-params = RunParameters(
-    model     = "phi4_complex",
-    symmetry  = "O(2)",
-    algorithm = "LoopTNR",
-    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,  # overwritten from file
-)
-
-entry = ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
+runs = query_runs(symmetry="O(2)", chi=32)     # filter by any combination of fields
+best = find_closest(-1.9, 0.5; symmetry="O(2)", chi=32, algorithm="LoopTNR")  # nearest (μ₀², λ)
+summarize_db()                                  # print everything as a table
 ```
 
-See [`scripts/ingest_jld2_example.jl`](scripts/ingest_jld2_example.jl) for a
-runnable version:
+Every value you get back prints as a short, readable summary instead of a
+wall of nested numbers:
 
+```julia-repl
+julia> runs
+16-element Vector{DatabaseEntry}:
+ DatabaseEntry(6d40ca82…, phi4_complex/O(2)/LoopTNR, χ=32, K=12, μ₀²=-0.5, λ=0.5, 31 iters, c=-0.0000)
+ DatabaseEntry(8061c8f0…, phi4_complex/O(2)/LoopTNR, χ=32, K=12, μ₀²=-0.6, λ=0.5, 31 iters, c=-0.0000)
+ ⋮
+
+julia> final_iteration(runs[1])
+CFTResults(iteration=30, norm=1.0000, c=-0.0000, 4/10 sectors populated)
+
+julia> find_sector(final_iteration(runs[1]), 2, 2)
+ScalingDimSector(j=1, s=2, 4 dims, Δ∈[1.2345, 5.6789])
 ```
-julia --project=. scripts/ingest_jld2_example.jl path/to/your/file.jld2
-```
 
-> **Windows path tip:** write the path as a normal string, e.g.
-> `raw"C:\Users\you\data\file.jld2"` or `"C:/Users/you/data/file.jld2"`.
-> `r"..."` is a *regex* literal in Julia (unlike Python), not a raw string —
-> using it for a Windows path will error on the backslashes.
-
-`ingest_jld2!` currently expects the HDF5 key layout used by the reference
-example file (`chi`, `K`, `μ0`, `λ`, `t`, and a `data` array of per-iteration
-records with `central_charge` and `scaling_dimensions` grouped by the
-`TensorKit` fusion-tree sector `(j, s)`). If your TNRKit output uses
-different key names, adjust `ingest_jld2!` and `_parse_sectors` in
-[`src/TACOBELL.jl`](src/TACOBELL.jl) to match — those are the only places
-that need to know about the on-disk JLD2 structure.
-
-### Query
+The raw numbers are still all there underneath (`.central_charge`, `.dims`,
+etc.) — this only changes how they *print*. A run's literal last iteration
+can be numerically unstable (finite-χ truncation error compounding under
+the RG flow), so for a more robust "converged" estimate, run a window-based
+plateau search instead of trusting the last value blindly:
 
 ```julia
-# All O(2) runs with chi=16
-runs = query_runs(symmetry="O(2)", chi=16)
-
-# Overview table
-summarize_db()
-
-# A specific iteration from an entry
-iter20 = get_iteration(runs[1], 20)
-println(iter20.central_charge)
-println(iter20.sectors)   # Vector{ScalingDimSector}
-
-# Nearest parameter point to (μ₀²=-1.9, λ=1.0) with same setup
-best = find_closest(-1.9, 1.0; symmetry="O(2)", chi=16, algorithm="LoopTNR")
+plateau_central_charge(runs[1])
+# (value = ..., err = ..., range = 22:26, suspect = false)
 ```
+
+`err` is that window's standard deviation (a rough convergence error bar);
+`suspect=true` means no clean window was found and the result may be
+unreliable. See the [`plateau_estimate`](src/TACOBELL.jl) docstring for the
+tunable knobs (`nwin`, `skipfrac`, `avoid_zero`).
+
+### 3. Get it out again
+
+For a table you can open in Excel/pandas/R — a summary row per run, or the
+full per-iteration/per-sector detail of one run:
+
+```julia
+export_csv(query_runs(symmetry="O(2)"); out="o2_results.csv")   # one row per run
+export_csv(runs[1]; out="run_detail.csv")                        # everything in one run, long format
+```
+
+For browsing on GitHub without Julia at all, regenerate the Markdown table
+after adding new runs:
+
+```julia
+generate_catalog()   # writes db/CATALOG.md
+```
+
+This repo is currently **private**, so "browsable by anyone" means anyone
+with access to it — switch it to public in GitHub's settings if you want
+that to mean the public internet.
+
+---
+
+## Reference
 
 ### Bulk ingestion (hundreds of files)
 
 `ingest_directory!` walks a directory recursively, ingests every matching
 file, skips ones already in the database, and logs (without aborting) any
-file that fails to read — built for pointing at a folder of hundreds of
-TNRKit outputs at once:
+file that fails to read:
 
 ```julia
 using TACOBELL
 
 summary = ingest_directory!("data/loop_tnr_runs";
     infer_params = _ -> RunParameters(
-        model="phi4_complex", symmetry="O(2)", algorithm="LoopTNR",
-        chi=0, K=0, mu0_sq=0.0, lambda=0.0,   # overwritten from each file
+        model="phi4_complex", symmetry="", algorithm="",
+        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
     ),
 )
 # summary == (total=.., inserted=.., skipped=.., failed=..)
 ```
 
-If a directory mixes several setups, `infer_params` can inspect the
+If a directory mixes several models, `infer_params` can inspect the
 filepath instead of returning a constant (e.g. a regex on the filename or
-parent folder) to pick `model`/`symmetry`/`algorithm` per file. `db/CATALOG.md`
-is regenerated automatically once at the end if anything new was inserted.
+parent folder). `db/CATALOG.md` regenerates automatically at the end if
+anything new was inserted, and it's safe to re-run on the same directory
+later — already-ingested files are skipped, not duplicated.
 
-For hundreds of files, run this as a **script from a terminal** rather than
-pasting into the REPL — see
-[`scripts/bulk_ingest.jl`](scripts/bulk_ingest.jl), edit the `infer_params`
-function near the top for your setup, then:
+For hundreds of files, run this as a script from a terminal rather than
+pasting into the REPL — edit
+[`scripts/bulk_ingest.jl`](scripts/bulk_ingest.jl)'s `infer_params` for your
+setup, then:
 
 ```
 julia --project=. scripts/bulk_ingest.jl path/to/data/dir
 ```
 
-It's safe to re-run on the same directory later (e.g. after adding more
-files) — already-ingested files are skipped, not duplicated.
+### Windows path gotcha
 
-### Browse without Julia
-
-After inserting new runs, regenerate the Markdown catalog so it's visible
-directly on GitHub:
-
-```julia
-generate_catalog()   # writes db/CATALOG.md
-```
-
-
-## Parameter reference
+Write file paths as a normal string: `raw"C:\Users\you\data\file.jld2"` or
+`"C:/Users/you/data/file.jld2"`. `r"..."` is a *regex* literal in Julia
+(unlike Python's raw strings) — using it for a Windows path errors on the
+backslashes.
 
 ### `RunParameters`
 
@@ -211,76 +197,76 @@ Each sector is labelled by the TensorKit fusion-tree quantum numbers `(j, s)`:
 | `dims` | `Vector{Float64}` | Scaling dimensions Δ in this sector, sorted ascending |
 
 For O(2) symmetry as used in this example: `j` is the O(2) angular momentum
-and `s ∈ {0,1,2}` distinguishes different irrep types
-(singlet/vector/adjoint or similar).
+and `s` distinguishes different irrep types. Sectors where nothing
+converged aren't stored at all (an absent sector means the same thing as an
+empty one, and TNR output can have dozens of these per iteration).
 
-## Database layout
+### Database layout
 
 ```
 db/
-├── index.toml          ← lightweight summary of all runs (auto-managed)
-├── CATALOG.md           ← human-readable table for browsing on GitHub (auto-managed)
+├── index.toml       ← lightweight summary of all runs (auto-managed)
+├── CATALOG.md        ← human-readable table for browsing on GitHub (auto-managed)
 └── runs/
-    ├── <uuid>.toml     ← one file per run, all iterations inside
+    ├── <uuid>.toml  ← one file per run, all iterations inside
     └── …
 ```
 
-The TOML format for a run uses TOML's `[[array of tables]]` syntax so each
-iteration block is self-contained and human-readable. Never edit `index.toml`
-or `CATALOG.md` by hand — both are generated from the `runs/*.toml` files.
+Never edit `index.toml` or `CATALOG.md` by hand — both are generated from
+the `runs/*.toml` files (`rebuild_index!()` / `generate_catalog()`).
 
-`CATALOG.md` is what makes the database browsable without Julia: it's a
-plain Markdown table that GitHub renders on the repo page, with each row
-linking to its full `runs/<uuid>.toml` file. This repo is currently
-**private**, so "browsable by anyone" means anyone with access to it —
-switch the repo to public in GitHub's settings if you want it open to
-everyone.
-
-## Sharing results / contributing
+### Sharing results / contributing
 
 Because every run is a single TOML file, contributing a new result is a
 small, self-contained pull request:
 
-1. Ingest your run locally (`insert_run!` or `ingest_jld2!`) so a new
-   `db/runs/<uuid>.toml` and an updated `db/index.toml` are created.
+1. Ingest your run locally so a new `db/runs/<uuid>.toml` and an updated
+   `db/index.toml` are created.
 2. Regenerate the catalog and commit all three files:
 
 ```julia
-using TACOBELL
 generate_catalog()
 ```
-
 ```
 git add db/runs/<uuid>.toml db/index.toml db/CATALOG.md
 git commit -m "Add run: <short description>"
 ```
 
-3. If your branch was based on an older `main` and other runs were merged in
-   the meantime, resolve any conflict in `db/index.toml` / `db/CATALOG.md`
-   by regenerating both instead of hand-editing the diff:
+3. If your branch was based on an older `main` and other runs were merged
+   in the meantime, resolve any conflict by regenerating instead of
+   hand-editing the diff, then re-commit:
 
 ```julia
-using TACOBELL
 rebuild_index!()
 generate_catalog()
 ```
 
-then re-commit those two files. Individual `db/runs/*.toml` files never need
-manual edits or conflict resolution — they're independent by construction.
+Individual `db/runs/*.toml` files never need manual edits or conflict
+resolution — they're independent by construction.
 
-## Running the tests
+### JLD2 key layout
+
+`ingest_jld2!` reads TNRKit's `.jld2` output directly with `HDF5.jl` (JLD2
+files are HDF5 containers, so no extra `JLD2.jl` dependency is needed). It
+currently expects the key layout of the reference example file (`chi`, `K`,
+`μ0`, `λ`, `t`, optionally `symmetry`/`algorithm`, and a `data` array of
+per-iteration records with `central_charge` and `scaling_dimensions`
+grouped by the TensorKit fusion-tree sector `(j, s)`). If your TNRKit
+output differs, adjust `ingest_jld2!` and `_parse_sectors` in
+[`src/TACOBELL.jl`](src/TACOBELL.jl) to match — those are the only places
+that need to know about the on-disk structure.
+
+### Running the tests
 
 ```
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-The test suite exercises insertion, duplicate detection, querying,
-`find_closest`, and index rebuilding against a temporary database, so it
-never touches the real `db/` directory.
+The test suite runs entirely against temporary databases, so it never
+touches the real `db/` directory.
 
 ## Roadmap
 
-- [ ] Export to CSV / HDF5 for plotting pipelines
 - [ ] TNRKit callback hook: `insert_run!` triggered automatically at convergence
 - [ ] Pluto notebook for interactive browsing and phase-diagram plotting
 - [ ] `diff_runs(id1, id2)` to compare two parameter sets side by side

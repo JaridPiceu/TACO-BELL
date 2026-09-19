@@ -92,6 +92,66 @@ using TACOBELL
             @test occursin("BTRG", text)
             @test occursin("2 run(s)", text)
         end
+
+        @testset "pretty-printing" begin
+            entry = query_runs(; db_path=tmp, symmetry="Z2")[1]
+            # Just check none of these error, and that the one-liners contain
+            # the key numbers rather than a raw multi-line struct dump.
+            @test occursin("χ=24", sprint(show, entry.params))
+            @test occursin("j=1", sprint(show, entry.iterations[2].sectors[2]))
+            @test occursin("c=0.4998", sprint(show, entry.iterations[2]))
+            @test occursin("2 iters", sprint(show, entry))
+        end
+
+        @testset "final_iteration and find_sector" begin
+            entry = query_runs(; db_path=tmp, symmetry="Z2")[1]
+            @test final_iteration(entry).iteration == 20
+
+            sec = find_sector(final_iteration(entry), 2, 1)
+            @test sec !== nothing
+            @test sec.dims == [0.125, 1.125]
+            @test find_sector(final_iteration(entry), 99, 99) === nothing
+        end
+
+        @testset "CFTResults.dims (flattened across sectors)" begin
+            r = query_runs(; db_path=tmp, symmetry="Z2")[1].iterations[2]
+            # sectors are [twice_j=0,s=0 -> [0.0,1.0,2.0]] and [twice_j=2,s=1 -> [0.125,1.125]]
+            @test r.dims == [0.0, 0.125, 1.0, 1.125, 2.0]
+            @test :dims in propertynames(r)
+
+            empty_r = CFTResults(iteration=0, normalization=0.0)
+            @test empty_r.dims == Float64[]
+        end
+
+        @testset "trajectories and plateau_estimate" begin
+            entry = query_runs(; db_path=tmp, symmetry="Z2")[1]
+            @test central_charge_trajectory(entry) == [0.4998]
+
+            traj = [1.0, 0.5, 0.501, 0.499, 0.5005, 0.5, 10.0]  # last point "blows up"
+            est = plateau_estimate(traj; nwin=3, skipfrac=0.0)
+            @test est.value ≈ 0.5 atol=0.01
+            @test 7 ∉ est.range   # the blown-up last point must be excluded
+
+            pc = plateau_central_charge(entry; nwin=1, skipfrac=0.0)
+            @test pc.value ≈ 0.4998
+        end
+
+        @testset "export_csv" begin
+            hits = query_runs(; db_path=tmp, symmetry="Z2")
+            summary_out = joinpath(tmp, "summary.csv")
+            export_csv(hits; out=summary_out)
+            @test isfile(summary_out)
+            summary_text = read(summary_out, String)
+            @test occursin("BTRG", summary_text)
+            @test length(readlines(summary_out)) == length(hits) + 1  # + header
+
+            run_out = joinpath(tmp, "run.csv")
+            export_csv(hits[1]; out=run_out)
+            @test isfile(run_out)
+            run_text = read(run_out, String)
+            @test occursin("twice_j", run_text)
+            @test occursin("0.125", run_text)
+        end
     end
 
     @testset "ingest_directory! resilience" begin

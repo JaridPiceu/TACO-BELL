@@ -9,19 +9,21 @@ calculations, designed for use alongside
 [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/).
 
 See the package README for a full walkthrough. The core entry points are
-[`insert_run!`](@ref), [`query_runs`](@ref), [`ingest_jld2!`](@ref),
-[`ingest_directory!`](@ref) and [`generate_catalog`](@ref) (regenerates the
-Markdown table for browsing on GitHub).
+[`insert_run!`](@ref)/[`ingest_jld2!`](@ref)/[`ingest_directory!`](@ref) (add
+data), [`query_runs`](@ref)/[`find_closest`](@ref) (look it up), and
+[`export_csv`](@ref)/[`generate_catalog`](@ref) (get it out again, as a CSV
+file or as a Markdown table for browsing on GitHub).
 """
 module TACOBELL
 
-using TOML, UUIDs, Dates, Printf
+using TOML, UUIDs, Dates, Printf, Statistics
 using HDF5
 
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
-export insert_run!, query_runs, load_entry, get_iteration, summarize_db
-export find_closest, list_algorithms, list_symmetries, rebuild_index!
-export ingest_jld2!, ingest_directory!, generate_catalog
+export insert_run!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
+export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!
+export ingest_jld2!, ingest_directory!, generate_catalog, export_csv
+export central_charge_trajectory, plateau_estimate, plateau_central_charge
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Types
@@ -82,6 +84,13 @@ Fields
 - `free_energy`     : free energy per site (optional)
 - `correlation_len` : correlation length in lattice units (optional)
 - `notes`           : free-text annotation
+
+Also exposes a derived `.dims` property: all scaling dimensions across every
+sector, flattened into one sorted `Vector{Float64}` — e.g. `result.dims[2]`
+for "the first excited state overall, regardless of which symmetry sector
+it's in", matching the flat `cft.scaling_dimensions[i]` indexing TNRKit
+itself provides. Use `.sectors` instead when you need to know *which*
+sector a given Δ came from.
 """
 Base.@kwdef struct CFTResults
     iteration       :: Int
@@ -92,6 +101,16 @@ Base.@kwdef struct CFTResults
     correlation_len :: Union{Float64, Missing}              = missing
     notes           :: String                               = ""
 end
+
+function Base.getproperty(r::CFTResults, name::Symbol)
+    if name === :dims
+        sectors = getfield(r, :sectors)
+        return isempty(sectors) ? Float64[] : sort(vcat((sec.dims for sec in sectors)...))
+    end
+    return getfield(r, name)
+end
+
+Base.propertynames(::CFTResults) = (fieldnames(CFTResults)..., :dims)
 
 """
     DatabaseEntry
@@ -105,6 +124,44 @@ Base.@kwdef struct DatabaseEntry
     runtime_s    :: Union{Float64,Missing} = missing  # wall-clock seconds stored in JLD2
     params       :: RunParameters
     iterations   :: Vector{CFTResults}  # one per stored RG step
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pretty-printing — a run's raw data is deeply nested and can be hundreds of
+# KB (dozens of symmetry sectors × tens of iterations), so the default
+# struct dump is unreadable. These give one-line summaries instead; the full
+# data underneath is unchanged and still fully accessible via the fields.
+# ─────────────────────────────────────────────────────────────────────────────
+
+function Base.show(io::IO, p::RunParameters)
+    print(io, "RunParameters(", p.model, ", ", p.symmetry, ", ", p.algorithm,
+          ", χ=", p.chi, ", K=", p.K, ", μ₀²=", p.mu0_sq, ", λ=", p.lambda, ")")
+end
+
+function Base.show(io::IO, s::ScalingDimSector)
+    j_str = iseven(s.twice_j) ? string(s.twice_j ÷ 2) : string(s.twice_j, "/2")
+    if isempty(s.dims)
+        print(io, "ScalingDimSector(j=", j_str, ", s=", s.s, ", 0 dims)")
+    else
+        print(io, "ScalingDimSector(j=", j_str, ", s=", s.s, ", ", length(s.dims),
+              " dims, Δ∈[", @sprintf("%.4f", first(s.dims)), ", ", @sprintf("%.4f", last(s.dims)), "])")
+    end
+end
+
+function Base.show(io::IO, r::CFTResults)
+    cc = r.central_charge === missing ? "—" : @sprintf("%.4f", r.central_charge)
+    populated = count(s -> !isempty(s.dims), r.sectors)
+    print(io, "CFTResults(iteration=", r.iteration, ", norm=", @sprintf("%.4f", r.normalization),
+          ", c=", cc, ", ", populated, "/", length(r.sectors), " sectors populated)")
+end
+
+function Base.show(io::IO, e::DatabaseEntry)
+    p = e.params
+    cc = _best_c(e.iterations)
+    cc_str = isnan(cc) ? "—" : @sprintf("%.4f", cc)
+    print(io, "DatabaseEntry(", first(e.id, 8), "…, ", p.model, "/", p.symmetry, "/", p.algorithm,
+          ", χ=", p.chi, ", K=", p.K, ", μ₀²=", p.mu0_sq, ", λ=", p.lambda,
+          ", ", length(e.iterations), " iters, c=", cc_str, ")")
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -296,10 +353,13 @@ end
 
 Read a JLD2 output file produced by TNRKit and insert it into the database.
 
-The `params` argument supplies fields that are *not* stored inside the JLD2
-(model name, symmetry string, algorithm name). Everything else (χ, K, μ₀²,
-λ, iterations, normalization, central charge, scaling dimensions) is read
-from the file.
+`params` supplies the one field that is never stored inside the JLD2:
+`model` (`"phi4_real"` / `"phi4_complex"`). Newer TNRKit output also stores
+`symmetry` and `algorithm` directly, in which case those are read from the
+file and whatever you pass in `params` for them is ignored — pass
+placeholders for older files that predate this. Everything else (χ, K, μ₀²,
+λ, iterations, normalization, central charge, scaling dimensions) is always
+read from the file.
 
 JLD2 files are HDF5 containers, so this reads them directly with HDF5.jl
 rather than depending on JLD2.jl.
@@ -310,10 +370,9 @@ using TACOBELL
 
 params = RunParameters(
     model     = "phi4_complex",
-    symmetry  = "O(2)",
-    algorithm = "LoopTNR",
-    # chi, K, mu0_sq, lambda are filled from the file:
-    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,
+    symmetry  = "",   # overwritten from file if present
+    algorithm = "",   # overwritten from file if present
+    chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0,  # always overwritten from file
 )
 ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
 ```
@@ -331,10 +390,15 @@ function ingest_jld2!(
         lambda = Float64(HDF5.read(f["λ"]))
         t      = Float64(HDF5.read(f["t"]))
 
+        # Newer TNRKit output stores these directly; prefer them when
+        # present and only fall back to `params` for older files that don't.
+        symmetry  = haskey(f, "symmetry")  ? String(HDF5.read(f["symmetry"]))  : params.symmetry
+        algorithm = haskey(f, "algorithm") ? String(HDF5.read(f["algorithm"])) : params.algorithm
+
         filled_params = RunParameters(
             model     = params.model,
-            symmetry  = params.symmetry,
-            algorithm = params.algorithm,
+            symmetry  = symmetry,
+            algorithm = algorithm,
             chi       = chi,
             K         = K,
             mu0_sq    = mu0_sq,
@@ -348,15 +412,19 @@ function ingest_jld2!(
             step = i - 1   # 0-based iteration index
             entry = f[ref][]
 
-            norm = Float64(entry["1"])
+            norm = Float64(_field(entry, "1"))
 
-            cc_ref = entry["2"]["central_charge"]
-            cc_re  = Float64(HDF5.read(f[cc_ref]["re"]))
+            results = _field(entry, "2")
+            cc_ref  = _field(results, "central_charge")
+            cc_val  = HDF5.read(f[cc_ref])          # complex scalar (Complex or (re,im)-like)
+            cc_re   = Float64(_field(cc_val, "re"))
 
-            sd     = entry["2"]["scaling_dimensions"]
-            sd_re  = Float64.(HDF5.read(f[sd["data"]]["re"]))
+            sd       = _field(results, "scaling_dimensions")
+            data_ref = _field(sd, "data")
+            sd_arr   = HDF5.read(f[data_ref])       # vector of complex-like values
+            sd_re    = Float64[_field(v, "re") for v in sd_arr]
 
-            sectors = _parse_sectors(f, sd["structure"], sd_re)
+            sectors = _parse_sectors(f, _field(sd, "structure"), sd_re)
 
             push!(iters, CFTResults(
                 iteration      = step,
@@ -373,25 +441,39 @@ function ingest_jld2!(
     end
 end
 
+# HDF5.jl reads compound HDF5 records back as `NamedTuple`s (or, for
+# built-in compound layouts like complex numbers, as `Complex`) rather than
+# Dict-like objects. `getfield` handles both — even fields with a purely
+# numeric name (from a plain Julia `Tuple`, e.g. "1", "2") — since NamedTuple
+# field names don't have to be valid Julia identifiers. Falls back to plain
+# `getindex` for actual Dict/HDF5.Group objects, which have no such field.
+function _field(x, key::AbstractString)
+    sym = Symbol(key)
+    hasfield(typeof(x), sym) && return getfield(x, sym)
+    return x[key]
+end
+
 # Parse the sector structure out of the JLD2 scaling_dimensions.structure field
 function _parse_sectors(f, struct_ref, all_dims::Vector{Float64})
     struct_val = f[struct_ref][]
-    kvvec_ref  = struct_val["kvvec"]
+    kvvec_ref  = _field(struct_val, "kvvec")
     kvvec      = f[kvvec_ref][]          # Vector of object references, one per sector
 
     sectors = ScalingDimSector[]
     for ref in kvvec
-        pair_val = f[ref][]              # named tuple: first=sector label, second=indices
-        first_ref  = pair_val["first"]
-        second_ref = pair_val["second"]
+        pair_val = f[ref][]              # named tuple: first=sector label, second=indices ref
+        label      = _field(pair_val, "first")   # sector label is stored inline, not a Reference
+        second_ref = _field(pair_val, "second")  # indices vector IS a Reference
 
-        label     = f[first_ref][]
-        j_ref     = label["j"]
-        twice_j   = Int(f[j_ref][]["twice"])
-        s         = Int(label["s"])
+        j_val   = _field(label, "j")     # also stored inline
+        twice_j = Int(_field(j_val, "twice"))
+        s       = Int(_field(label, "s"))
 
         indices   = Int.(f[second_ref][])   # 1-based into all_dims
-        dims      = isempty(indices) ? Float64[] : sort(all_dims[indices])
+        isempty(indices) && continue   # nothing found in this sector — same information as
+                                        # "sector absent", so skip storing it (files have
+                                        # dozens of these; they're most of the file size)
+        dims = sort(all_dims[indices])
 
         push!(sectors, ScalingDimSector(twice_j=twice_j, s=s, dims=dims))
     end
@@ -549,6 +631,95 @@ function get_iteration(entry::DatabaseEntry, step::Int)
 end
 
 """
+    final_iteration(entry) -> CFTResults
+
+The stored iteration with the highest RG step index — the usual "give me
+the answer" shortcut, equivalent to
+`get_iteration(entry, maximum(r.iteration for r in entry.iterations))`.
+"""
+final_iteration(entry::DatabaseEntry) = argmax(r -> r.iteration, entry.iterations)
+
+"""
+    find_sector(result, twice_j, s) -> Union{ScalingDimSector, Nothing}
+
+Look up one symmetry sector's scaling dimensions from a single iteration's
+result by its `(twice_j, s)` label, or `nothing` if that sector wasn't
+populated at this iteration.
+"""
+function find_sector(result::CFTResults, twice_j::Int, s::Int)
+    for sec in result.sectors
+        sec.twice_j == twice_j && sec.s == s && return sec
+    end
+    return nothing
+end
+
+"""
+    central_charge_trajectory(entry) -> Vector{Float64}
+
+The central charge at every stored iteration that has one, in order of
+increasing RG step. Feed this to [`plateau_estimate`](@ref), or plot it
+directly to see the RG flow.
+"""
+function central_charge_trajectory(entry::DatabaseEntry)
+    sorted = sort(entry.iterations, by = r -> r.iteration)
+    return Float64[r.central_charge for r in sorted if r.central_charge !== missing]
+end
+
+"""
+    plateau_estimate(values; nwin=5, skipfrac=0.3, avoid_zero=false, zero_tol=1e-6)
+        -> (value, err, range, suspect)
+
+Estimate a converged value from a noisy RG trajectory by scanning windows of
+`nwin` consecutive values and keeping the flattest one (smallest standard
+deviation), rather than trusting the literal last value — TNR trajectories
+are often stable for a stretch and then drift or blow up in the last few
+steps as finite-χ truncation error compounds. The first `skipfrac` fraction
+of `values` is excluded from the search, since it's usually a lattice-scale
+transient rather than the converged plateau.
+
+Set `avoid_zero=true` to also exclude windows containing a value with
+`abs(x) < zero_tol` when a clean window exists elsewhere — useful for
+scaling dimensions, where an under-converged eigensolver can pad a sector
+with a numerical near-zero. Leave it `false` for the central charge, where
+`c → 0` can be a genuine physical answer.
+
+Returns `value` (the window mean), `err` (the window's standard deviation,
+a rough convergence error bar), `range` (which indices into `values` were
+used), and `suspect` (true if no window satisfying `avoid_zero` was found,
+so `range` had to fall back to the plain flattest window).
+"""
+function plateau_estimate(
+        values::AbstractVector{<:Real};
+        nwin::Int = 5, skipfrac::Float64 = 0.3,
+        avoid_zero::Bool = false, zero_tol::Float64 = 1.0e-6,
+    )
+    n = length(values)
+    n == 0 && error("plateau_estimate: empty trajectory")
+    w = min(nwin, n)
+    windows = [values[i:(i + w - 1)] for i in 1:(n - w + 1)]
+    stds = Statistics.std.(windows)
+    start_min = max(1, ceil(Int, skipfrac * n))
+    isbad(win) = avoid_zero && any(x -> abs(x) < zero_tol, win)
+    clean = findall(i -> !isbad(windows[i]) && i >= start_min, eachindex(windows))
+    candidates = isempty(clean) ? eachindex(windows) : clean
+    i_best = candidates[argmin(stds[candidates])]
+    return (
+        value   = Statistics.mean(windows[i_best]),
+        err     = stds[i_best],
+        range   = i_best:(i_best + w - 1),
+        suspect = isempty(clean),
+    )
+end
+
+"""
+    plateau_central_charge(entry; kwargs...)
+
+Shorthand for `plateau_estimate(central_charge_trajectory(entry); kwargs...)`.
+"""
+plateau_central_charge(entry::DatabaseEntry; kwargs...) =
+    plateau_estimate(central_charge_trajectory(entry); kwargs...)
+
+"""
     find_closest(mu0_sq, lambda; filters...) -> Union{DatabaseEntry, Nothing}
 
 Among entries matching the discrete keyword filters, return the one whose
@@ -625,6 +796,78 @@ Inspect which distinct values are present in the database.
 """
 list_algorithms(; db_path=DB_PATH()) = unique(r["algorithm"] for r in _load_index(db_path))
 list_symmetries(; db_path=DB_PATH()) = unique(r["symmetry"]  for r in _load_index(db_path))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API — export
+# ─────────────────────────────────────────────────────────────────────────────
+
+_csv_field(x::AbstractString) =
+    (occursin(",", x) || occursin("\"", x) || occursin("\n", x)) ?
+        "\"" * replace(x, "\"" => "\"\"") * "\"" : x
+_csv_field(::Missing) = ""
+_csv_field(x) = string(x)
+_csv_row(vals) = join(_csv_field.(vals), ",")
+
+"""
+    export_csv(entries=query_runs(); out="tacobell_export.csv") -> String
+
+Write a summary table — one row per run — to a CSV file: the simplest way
+to get data out of the database and into Excel, pandas, R, or anything else
+that isn't Julia. Pass a filtered result from [`query_runs`](@ref) or
+[`find_closest`](@ref) to export just a selection instead of everything.
+Returns the path written.
+
+# Example
+```julia
+export_csv(query_runs(symmetry="O(2)"); out="o2_results.csv")
+```
+"""
+function export_csv(entries::Vector{DatabaseEntry} = query_runs(); out::String = "tacobell_export.csv")
+    io = IOBuffer()
+    println(io, _csv_row((
+        "id", "model", "symmetry", "algorithm", "chi", "K", "mu0_sq", "lambda",
+        "n_iterations", "last_iteration", "central_charge", "source_file",
+    )))
+    for e in entries
+        p = e.params
+        cc = _best_c(e.iterations)
+        last_it = isempty(e.iterations) ? missing : maximum(r -> r.iteration, e.iterations)
+        println(io, _csv_row((
+            e.id, p.model, p.symmetry, p.algorithm, p.chi, p.K, p.mu0_sq, p.lambda,
+            length(e.iterations), last_it, isnan(cc) ? missing : cc, e.source_file,
+        )))
+    end
+    write(out, String(take!(io)))
+    @info "Wrote $(length(entries)) row(s) to $out"
+    return out
+end
+
+"""
+    export_csv(entry::DatabaseEntry; out=entry.id[1:8]*".csv") -> String
+
+Write one run's full per-iteration, per-sector scaling-dimension data to a
+CSV file in long format (one row per (iteration, sector, dimension)) — a
+way to get everything in a single ~hundreds-of-KB run file into a flat
+table for plotting or analysis outside Julia. Returns the path written.
+"""
+function export_csv(entry::DatabaseEntry; out::String = first(entry.id, 8) * ".csv")
+    io = IOBuffer()
+    println(io, _csv_row((
+        "iteration", "normalization", "central_charge", "twice_j", "s", "dim_index", "delta",
+    )))
+    for r in sort(entry.iterations, by = x -> x.iteration)
+        cc = r.central_charge === missing ? missing : r.central_charge
+        if isempty(r.sectors)
+            println(io, _csv_row((r.iteration, r.normalization, cc, missing, missing, missing, missing)))
+        end
+        for sec in r.sectors, (i, d) in enumerate(sec.dims)
+            println(io, _csv_row((r.iteration, r.normalization, cc, sec.twice_j, sec.s, i, d)))
+        end
+    end
+    write(out, String(take!(io)))
+    @info "Wrote full trajectory for $(first(entry.id, 8))… to $out"
+    return out
+end
 
 """
     generate_catalog(; db_path, out) -> String

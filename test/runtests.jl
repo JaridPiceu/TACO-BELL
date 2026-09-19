@@ -1,5 +1,6 @@
 using Test
 using TACOBELL
+using HDF5   # activates the ingest_jld2!/ingest_directory! extension
 
 @testset "TACOBELL.jl" begin
 
@@ -91,6 +92,35 @@ using TACOBELL
             text = read(out, String)
             @test occursin("BTRG", text)
             @test occursin("2 run(s)", text)
+        end
+    end
+
+    @testset "ingest_directory! resilience" begin
+        # ingest_directory! must not abort a hundred-file batch because one
+        # file is unreadable — it should log and keep going. We don't have a
+        # real TNRKit .jld2 fixture, so this exercises the error path with
+        # deliberately-broken "jld2" files (plain text, not HDF5).
+        mktempdir() do datadir
+            mktempdir() do dbdir
+                write(joinpath(datadir, "broken1.jld2"), "not an hdf5 file")
+                write(joinpath(datadir, "broken2.jld2"), "also not an hdf5 file")
+                mkpath(joinpath(datadir, "subdir"))
+                write(joinpath(datadir, "subdir", "broken3.jld2"), "nope")
+
+                summary = ingest_directory!(datadir;
+                    infer_params = _ -> RunParameters(
+                        model="x", symmetry="x", algorithm="x",
+                        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
+                    ),
+                    db_path = dbdir,
+                )
+
+                @test summary.total == 3
+                @test summary.inserted == 0
+                @test summary.failed == 3
+                @test summary.skipped == 0
+                @test isempty(query_runs(; db_path=dbdir))
+            end
         end
     end
 end

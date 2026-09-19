@@ -128,6 +128,42 @@ println(iter20.sectors)   # Vector{ScalingDimSector}
 best = find_closest(-1.9, 1.0; symmetry="O(2)", chi=16, algorithm="LoopTNR")
 ```
 
+### Bulk ingestion (hundreds of files)
+
+`ingest_directory!` walks a directory recursively, ingests every matching
+file, skips ones already in the database, and logs (without aborting) any
+file that fails to read — built for pointing at a folder of hundreds of
+TNRKit outputs at once:
+
+```julia
+using TACOBELL, HDF5
+
+summary = ingest_directory!("data/loop_tnr_runs";
+    infer_params = _ -> RunParameters(
+        model="phi4_complex", symmetry="O(2)", algorithm="LoopTNR",
+        chi=0, K=0, mu0_sq=0.0, lambda=0.0,   # overwritten from each file
+    ),
+)
+# summary == (total=.., inserted=.., skipped=.., failed=..)
+```
+
+If a directory mixes several setups, `infer_params` can inspect the
+filepath instead of returning a constant (e.g. a regex on the filename or
+parent folder) to pick `model`/`symmetry`/`algorithm` per file. `db/CATALOG.md`
+is regenerated automatically once at the end if anything new was inserted.
+
+For hundreds of files, run this as a **script from a terminal** rather than
+pasting into the REPL — see
+[`scripts/bulk_ingest.jl`](scripts/bulk_ingest.jl), edit the `infer_params`
+function near the top for your setup, then:
+
+```
+julia --project=. scripts/bulk_ingest.jl path/to/data/dir
+```
+
+It's safe to re-run on the same directory later (e.g. after adding more
+files) — already-ingested files are skipped, not duplicated.
+
 ### Browse without Julia
 
 After inserting new runs, regenerate the Markdown catalog so it's visible

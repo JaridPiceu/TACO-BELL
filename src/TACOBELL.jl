@@ -20,7 +20,7 @@ using TOML, UUIDs, Dates, Printf
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
 export insert_run!, query_runs, load_entry, get_iteration, summarize_db
 export find_closest, list_algorithms, list_symmetries, rebuild_index!
-export ingest_jld2!, generate_catalog
+export ingest_jld2!, ingest_directory!, generate_catalog
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Types
@@ -322,6 +322,41 @@ ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", params)
 ```
 """
 function ingest_jld2! end
+
+"""
+    ingest_directory!(dir; infer_params, db_path, extension=".jld2", allow_duplicate=false)
+
+Recursively ingest every matching file under `dir` (hundreds of files is the
+intended use case). `infer_params` is a function `filepath -> RunParameters`
+supplying the fields not stored in the file (`model`, `symmetry`,
+`algorithm`) for that particular file — pass a closure that returns the same
+`RunParameters` for every call if a whole directory shares one setup, or
+inspect `filepath` (e.g. with a regex on its filename or parent folder) if
+different files need different labels.
+
+A file that is already in the database is skipped and counted, not treated
+as an error. A file that fails to read or parse is logged with `@warn` and
+skipped, without aborting the rest of the batch. `db/CATALOG.md` is
+regenerated once at the end if anything new was inserted.
+
+Returns `(; total, inserted, skipped, failed)`.
+
+!!! note "Requires HDF5.jl"
+    Same extension as [`ingest_jld2!`](@ref) — `using HDF5` first.
+
+# Example
+```julia
+using TACOBELL, HDF5
+
+summary = ingest_directory!("data/loop_tnr_runs";
+    infer_params = _ -> RunParameters(
+        model="phi4_complex", symmetry="O(2)", algorithm="LoopTNR",
+        chi=0, K=0, mu0_sq=0.0, lambda=0.0,   # overwritten from each file
+    ),
+)
+```
+"""
+function ingest_directory! end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API — reading

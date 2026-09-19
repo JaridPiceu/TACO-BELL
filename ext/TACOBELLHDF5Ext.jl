@@ -13,7 +13,7 @@ module TACOBELLHDF5Ext
 using TACOBELL
 using HDF5
 
-using TACOBELL: RunParameters, CFTResults, ScalingDimSector, insert_run!
+using TACOBELL: RunParameters, CFTResults, ScalingDimSector, insert_run!, generate_catalog
 
 """
     ingest_jld2!(filepath, params; db_path, allow_duplicate)
@@ -99,6 +99,53 @@ function _parse_sectors(f, struct_ref, all_dims::Vector{Float64})
         push!(sectors, ScalingDimSector(twice_j=twice_j, s=s, dims=dims))
     end
     return sectors
+end
+
+"""
+    ingest_directory!(dir; infer_params, db_path, extension=".jld2", allow_duplicate=false)
+
+See [`TACOBELL.ingest_directory!`](@ref) for the full docstring.
+"""
+function TACOBELL.ingest_directory!(
+        dir :: String;
+        infer_params,
+        db_path     :: String  = TACOBELL.DB_PATH(),
+        extension   :: String  = ".jld2",
+        allow_duplicate :: Bool = false,
+    )
+    files = String[]
+    for (root, _, fnames) in walkdir(dir)
+        for fn in fnames
+            endswith(lowercase(fn), lowercase(extension)) && push!(files, joinpath(root, fn))
+        end
+    end
+    sort!(files)
+    isempty(files) && @warn "No *$(extension) files found under $dir"
+
+    n_ok = n_skip = n_err = 0
+    for (i, filepath) in enumerate(files)
+        label = "[$i/$(length(files))] $(basename(filepath))"
+        try
+            params = infer_params(filepath)
+            TACOBELL.ingest_jld2!(filepath, params; db_path, allow_duplicate)
+            n_ok += 1
+            @info "$label -> inserted"
+        catch err
+            if err isa ErrorException && startswith(err.msg, "Duplicate:")
+                n_skip += 1
+                @info "$label -> skipped (already in db)"
+            else
+                n_err += 1
+                @warn "$label -> FAILED" exception=(err, catch_backtrace())
+            end
+        end
+    end
+
+    n_ok > 0 && generate_catalog(; db_path)
+
+    summary = (total=length(files), inserted=n_ok, skipped=n_skip, failed=n_err)
+    @info "Bulk ingest complete" summary...
+    return summary
 end
 
 end # module

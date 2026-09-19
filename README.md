@@ -104,8 +104,6 @@ best = find_closest(-1.9, 1.0; symmetry="O(2)", chi=16, algorithm="LoopTNR")
 | `normalization` | Float64 | Per-site tensor norm at this step |
 | `central_charge` | Float64? | Extracted central charge *c* |
 | `sectors` | `Vector{ScalingDimSector}` | Scaling dims grouped by symmetry sector |
-| `free_energy` | Float64? | Free energy per site |
-| `correlation_len` | Float64? | Correlation length (lattice units) |
 | `notes` | String | Free-text annotation |
 
 ### `ScalingDimSector`

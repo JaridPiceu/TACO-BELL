@@ -165,6 +165,22 @@ using TACOBELL
             @test "n" in split(readlines(run_out)[1], ",") # charge column named after the real field
             @test occursin("0.125", run_text)
         end
+
+        @testset "export_json" begin
+            hits = query_runs(; db_path=tmp, symmetry="Z2")
+            json_out = joinpath(tmp, "export.json")
+            export_json(hits; out=json_out)
+            @test isfile(json_out)
+            text = read(json_out, String)
+
+            # No real JSON parser in the stdlib to round-trip against, so
+            # check structurally: balanced brackets and the expected content.
+            @test count(==('{'), text) == count(==('}'), text)
+            @test count(==('['), text) == count(==(']'), text)
+            @test occursin("\"model\":\"phi4_real\"", text)
+            @test occursin("\"n\":1", text)  # Z2 sector charge, from the real field name
+            @test !occursin("NaN", text)     # NaN/missing must serialize as null, not raw NaN
+        end
     end
 
     @testset "ingest_directory! resilience" begin

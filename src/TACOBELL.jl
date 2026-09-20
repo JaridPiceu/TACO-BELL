@@ -22,8 +22,9 @@ using HDF5
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
 export insert_run!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
 export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!, correct_field!
-export ingest_jld2!, ingest_directory!, generate_catalog, export_csv
+export ingest_jld2!, ingest_directory!, generate_catalog, export_csv, export_json
 export central_charge_trajectory, plateau_estimate, plateau_central_charge
+export plot_central_charge
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Types
@@ -778,6 +779,27 @@ plateau_central_charge(entry::DatabaseEntry; kwargs...) =
     plateau_estimate(central_charge_trajectory(entry); kwargs...)
 
 """
+    plot_central_charge(entry; kwargs...)
+
+Plot the central charge as a function of RG iteration for one run — the
+quickest way to eyeball whether/where it converged. `kwargs` are passed
+through to `Plots.plot` (e.g. `title`, `ylims`).
+
+!!! note "Requires Plots.jl"
+    This method is provided by a package extension and only becomes
+    available once you `using Plots`. Run `using Pkg; Pkg.add("Plots")`
+    once if you don't already have it — note that, like any `Pkg.add`,
+    this will add Plots as an ordinary dependency of this environment.
+
+# Example
+```julia
+using TACOBELL, Plots
+plot_central_charge(runs[1])
+```
+"""
+function plot_central_charge end
+
+"""
     find_closest(mu0_sq, lambda; filters...) -> Union{DatabaseEntry, Nothing}
 
 Among entries matching the discrete keyword filters, return the one whose
@@ -976,6 +998,49 @@ function export_csv(entry::DatabaseEntry; out::String = first(entry.id, 8) * ".c
     end
     write(out, String(take!(io)))
     @info "Wrote full trajectory for $(first(entry.id, 8))… to $out"
+    return out
+end
+
+# Minimal hand-rolled JSON writer — the data here is just numbers, strings,
+# dicts and arrays (plus `missing`/NaN, mapped to `null`), so this avoids
+# pulling in a JSON dependency for one export function.
+_to_json(x::Missing) = "null"
+_to_json(x::Bool) = x ? "true" : "false"
+_to_json(x::Real) = (isnan(x) || isinf(x)) ? "null" : string(x)
+_to_json(x::AbstractString) = "\"" * replace(replace(replace(replace(replace(
+    x, "\\" => "\\\\"), "\"" => "\\\""), "\n" => "\\n"), "\r" => "\\r"), "\t" => "\\t") * "\""
+_to_json(x::AbstractDict) = "{" * join((_to_json(string(k)) * ":" * _to_json(v) for (k, v) in x), ",") * "}"
+_to_json(x::Union{AbstractVector, Tuple}) = "[" * join((_to_json(v) for v in x), ",") * "]"
+
+"""
+    export_json(entries=query_runs(); out="tacobell_export.json") -> String
+
+Write a summary of the database to a single JSON file: one object per run,
+with its parameters and the scaling-dimension sectors of its final
+iteration (not the full per-iteration trajectory — use [`export_csv`](@ref)
+for that). This is what feeds the static "browse the database" webpage
+(see `web/` in the repository), but is also just a portable,
+language-agnostic snapshot for any other tool to consume. Pass a filtered
+result from [`query_runs`](@ref) to export just a selection. Returns the
+path written.
+"""
+function export_json(entries::Vector{DatabaseEntry} = query_runs(); out::String = "tacobell_export.json")
+    runs = map(entries) do e
+        p = e.params
+        fi = isempty(e.iterations) ? nothing : final_iteration(e)
+        Dict{String, Any}(
+            "id" => e.id, "model" => p.model, "symmetry" => p.symmetry, "algorithm" => p.algorithm,
+            "chi" => p.chi, "K" => p.K, "mu0_sq" => p.mu0_sq, "lambda" => p.lambda,
+            "n_iterations" => length(e.iterations),
+            "central_charge" => (c = _best_c(e.iterations); isnan(c) ? missing : c),
+            "final_iteration" => fi === nothing ? missing : fi.iteration,
+            "sectors" => fi === nothing ? [] :
+                [Dict{String, Any}("charge" => sec.charge, "dims" => sec.dims) for sec in fi.sectors],
+        )
+    end
+    payload = Dict{String, Any}("generated_at" => string(now()), "runs" => runs)
+    write(out, _to_json(payload))
+    @info "Wrote $(length(entries)) run(s) to $out"
     return out
 end
 

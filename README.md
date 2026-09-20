@@ -45,6 +45,11 @@ using TACOBELL
 ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", "phi4_complex")
 ```
 
+Don't have a compatible file yet? See
+[Producing a compatible JLD2 file from TNRKit](#producing-a-compatible-jld2-file-from-tnrkit)
+in the Reference section below — that's the piece that goes in your TNRKit
+driver script, not in TACOBELL.
+
 Got hundreds of files in a folder? Point `ingest_directory!` at it instead —
 see [Bulk ingestion](#bulk-ingestion-hundreds-of-files) below. Building the
 `CFTResults`/`RunParameters` yourself instead of from a file also works —
@@ -107,6 +112,19 @@ plateau_central_charge(runs[1])
 unreliable. See the [`plateau_estimate`](src/TACOBELL.jl) docstring for the
 tunable knobs (`nwin`, `skipfrac`, `avoid_zero`).
 
+To see the whole RG flow at a glance rather than just the endpoint:
+
+```julia
+using TACOBELL, Plots   # requires Plots.jl — see note below
+plot_central_charge(runs[1])
+```
+
+`plot_central_charge` is provided by a package extension and only exists
+once `Plots` is loaded — TACOBELL itself doesn't depend on it, since Plots
+is a heavy stack and this is purely a convenience. The first time you use
+it, `Pkg.add("Plots")` if you don't already have it; that adds Plots as an
+ordinary dependency of your environment, same as any `Pkg.add`.
+
 ### 3. Get it out again
 
 For a table you can open in Excel/pandas/R — a summary row per run, or the
@@ -123,6 +141,11 @@ after adding new runs:
 ```julia
 generate_catalog()   # writes db/CATALOG.md
 ```
+
+Or browse it interactively in a webpage — pick a symmetry/algorithm, type in
+μ₀²/λ, and get the matched central charge and scaling-dimension sectors back,
+with a small phase-diagram chart. See
+[The Explorer webpage](#the-explorer-webpage) in the Reference section.
 
 This repo is currently **private**, so "browsable by anyone" means anyone
 with access to it — switch it to public in GitHub's settings if you want
@@ -159,6 +182,48 @@ setup, then:
 ```
 julia --project=. scripts/bulk_ingest.jl path/to/data/dir
 ```
+
+### Producing a compatible JLD2 file from TNRKit
+
+This is the piece that goes in **your TNRKit driver script** — the code
+that runs the TNR scheme and saves the result in a shape `ingest_jld2!` can
+read. TNRKit's own `finalize!` only returns the tensor's normalization at
+each step, not any CFT data, so pair it with `CFTData(scheme)` via a custom
+`Finalizer`:
+
+```julia
+using TNRKit, JLD2
+
+# 1. A Finalizer that returns (normalization, CFTData) at every RG step.
+#    Write one method per scheme type you use (LoopTNR here; same idea for
+#    BTRG, TRG, ...).
+function my_finalization(scheme::LoopTNR)
+    n = finalize!(scheme)
+    data = CFTData(scheme)
+    return n, data
+end
+custom_Finalizer = Finalizer(my_finalization, Tuple{Float64, Any})
+
+# 2. Build your scheme/tensor as usual (χ, K, μ₀², λ, symmetry all baked in
+#    however your setup already does that), then run with that Finalizer.
+#    `data` comes back as Vector{Tuple{Float64,CFTData}} — one entry per
+#    RG step, exactly what `ingest_jld2!` expects.
+t = @elapsed data = run!(scheme, trscheme, criterion, custom_Finalizer)
+
+# 3. Save with the keys ingest_jld2! looks for. `symmetry`/`algorithm` are
+#    optional but recommended (see "1. Add a result" above); `model` is
+#    never stored here — you supply it later, at ingest time.
+jldsave("Com_PD_O2_mu0$(μ0)_lam$(λ)_K$(K)_chi$(chi)_iter$(length(data) - 1).jld2";
+    chi=chi, K=K, μ0=μ0, λ=λ, t=t, data=data,
+    symmetry="O(2)", algorithm="LoopTNR", niter=length(data) - 1,
+)
+```
+
+If your own driver script already saves under different key names, either
+match these names in your `jldsave` call, or adjust the key names
+`ingest_jld2!` looks for in [`src/TACOBELL.jl`](src/TACOBELL.jl) — either
+works, but keeping the file itself standard means any TNRKit script anyone
+writes later can feed straight into this database without modification.
 
 ### Windows path gotcha
 
@@ -238,6 +303,31 @@ db/
 Never edit `index.toml` or `CATALOG.md` by hand — both are generated from
 the `runs/*.toml` files (`rebuild_index!()` / `generate_catalog()`).
 
+### The Explorer webpage
+
+[`web/index.html`](web/index.html) is a single static page (no server, no
+build step) that lets you pick a model/symmetry/algorithm, type in μ₀²/λ,
+and see the matched run's central charge and scaling-dimension sectors,
+plus a small phase-diagram chart of *c* vs μ₀² for that setup. It reads
+[`web/data/tacobell.json`](web/data/tacobell.json), a snapshot written by
+`export_json`:
+
+```julia
+export_json(; out="web/data/tacobell.json")
+```
+
+Regenerate that snapshot (and commit it) the same way you'd regenerate
+`CATALOG.md` — after adding new runs, before sharing the page. To view it
+locally, **serve** the `web/` folder rather than double-clicking
+`index.html` — browsers block a page's own `fetch()` of a local file opened
+via `file://`. In VS Code, the simplest way is the "Live Server" extension:
+right-click `web/index.html` → *Open with Live Server*. Without VS Code, any
+static file server works, e.g. `python -m http.server 8000` from inside
+`web/`, then open `http://localhost:8000`. To put this online for real, enable
+GitHub Pages for this repo pointed at the `web/` folder — note that on
+GitHub's free plan, Pages only serves **public** repos, so this waits for
+the same "make it public" step as the rest of the database.
+
 ### Sharing results / contributing
 
 Because every run is a single TOML file, contributing a new result is a
@@ -293,5 +383,5 @@ touches the real `db/` directory.
 ## Roadmap
 
 - [ ] TNRKit callback hook: `insert_run!` triggered automatically at convergence
-- [ ] Pluto notebook for interactive browsing and phase-diagram plotting
+- [ ] GitHub Pages deployment for the Explorer webpage, once the repo goes public
 - [ ] `diff_runs(id1, id2)` to compare two parameter sets side by side

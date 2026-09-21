@@ -696,7 +696,7 @@ notes = ""
 
 [params]
 chi = 16
-symmetry = "U1"
+symmetry = "U(1)"
 model = "phi4_complex"
 algorithm = "LoopTNR"
 lambda = 0.45

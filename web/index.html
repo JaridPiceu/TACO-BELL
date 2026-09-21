@@ -1,4 +1,5 @@
 <title>TACO-BELL Explorer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌮</text></svg>">
 <style>
   :root {
     color-scheme: light;
@@ -219,6 +220,23 @@
   footer a { color: inherit; }
 
   [hidden] { display: none !important; }
+
+  /* ---- easter egg: type "taco" anywhere ---- */
+  .taco-rain { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 999; }
+  .taco-rain .drop { position: absolute; top: -10vh; animation: taco-fall linear forwards; }
+  @keyframes taco-fall {
+    to { transform: translateY(120vh) rotate(360deg); }
+  }
+  .taco-toast {
+    position: fixed; left: 50%; top: 18px; transform: translateX(-50%) translateY(-16px);
+    background: var(--text); color: var(--page); font-family: var(--mono); font-size: 13px;
+    padding: 8px 16px; border-radius: 999px; z-index: 1000; opacity: 0; white-space: nowrap;
+    transition: opacity 200ms, transform 200ms; pointer-events: none;
+  }
+  .taco-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .taco-rain .drop { animation: none; display: none; }
+  }
 </style>
 
 <div class="wrap">
@@ -779,6 +797,53 @@
     });
   }
 
+  // ---------------------------------------------------------- easter egg
+  function tacoRain() {
+    var rain = document.createElement("div");
+    rain.className = "taco-rain";
+    document.body.appendChild(rain);
+    var n = 28;
+    for (var i = 0; i < n; i++) {
+      var drop = document.createElement("span");
+      drop.className = "drop";
+      drop.textContent = Math.random() < 0.15 ? "🔔" : "🌮";
+      drop.style.left = Math.random() * 100 + "vw";
+      drop.style.fontSize = (18 + Math.random() * 18) + "px";
+      drop.style.animationDuration = (1.6 + Math.random() * 1.4) + "s";
+      drop.style.animationDelay = (Math.random() * 0.5) + "s";
+      rain.appendChild(drop);
+    }
+
+    var msgs = [
+      "🔔 Order up! One taco, extra central charge.",
+      "🌮 Live, laugh, TNR.",
+      "🔔🌮 Think inside the tensor.",
+      "You found the secret menu item.",
+      "🌮 Coarse-grained to perfection.",
+    ];
+    var toast = document.createElement("div");
+    toast.className = "taco-toast";
+    toast.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+    document.body.appendChild(toast);
+    requestAnimationFrame(function () { toast.classList.add("show"); });
+    setTimeout(function () {
+      toast.classList.remove("show");
+      setTimeout(function () { toast.remove(); }, 250);
+    }, 2200);
+    setTimeout(function () { rain.remove(); }, 3400);
+  }
+
+  function initTacoEasterEgg() {
+    var buffer = "";
+    window.addEventListener("keydown", function (e) {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+      var tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      buffer = (buffer + e.key).slice(-4).toLowerCase();
+      if (buffer === "taco") { tacoRain(); buffer = ""; }
+    });
+  }
+
   // ----------------------------------------------------------------- init
   function init(data) {
     INDEX = data;
@@ -816,6 +881,8 @@
 
     renderResult();
   }
+
+  initTacoEasterEgg();
 
   fetch("data/tacobell.json")
     .then(function (r) { return r.json(); })

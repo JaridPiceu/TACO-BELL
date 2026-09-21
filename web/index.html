@@ -1,4 +1,5 @@
 <title>TACO-BELL Explorer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌮</text></svg>">
 <style>
   :root {
     color-scheme: light;
@@ -71,6 +72,23 @@
     gap: 10px;
   }
   header.hero .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .logo {
+    position: relative; display: inline-block; font-size: 30px; line-height: 1;
+    transform-origin: top center; cursor: default;
+  }
+  .logo .logo-taco {
+    position: absolute; left: 52%; top: 58%; font-size: 17px;
+    transform: translate(-50%, 0) rotate(-10deg);
+  }
+  .logo:hover, .brand:focus-within .logo { animation: bell-ring 0.6s ease; }
+  @keyframes bell-ring {
+    0%, 100% { transform: rotate(0deg); }
+    20% { transform: rotate(-14deg); }
+    40% { transform: rotate(11deg); }
+    60% { transform: rotate(-7deg); }
+    80% { transform: rotate(4deg); }
+  }
+  @media (prefers-reduced-motion: reduce) { .logo:hover, .brand:focus-within .logo { animation: none; } }
   .like-btn {
     margin-left: auto; display: flex; align-items: center; gap: 7px;
     font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2);
@@ -107,6 +125,8 @@
     margin: 0; font-size: 14.5px; font-weight: 600; color: var(--text-2); text-wrap: balance;
   }
   header.hero p.lede { margin: 0; color: var(--text-2); font-size: 14px; max-width: 72ch; line-height: 1.55; }
+  header.hero p.lede a { color: var(--series-1); text-decoration: none; font-weight: 600; }
+  header.hero p.lede a:hover { text-decoration: underline; }
   header.hero .stats {
     display: flex; flex-wrap: wrap; gap: 18px 28px; margin-top: 6px;
     padding-top: 14px; border-top: 1px solid var(--grid);
@@ -130,7 +150,8 @@
   .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .field label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--muted); font-family: var(--mono);
+    color: var(--muted); font-family: var(--mono); cursor: help;
+    text-decoration: underline dotted; text-underline-offset: 2px;
   }
   .field select, .field input[type="number"] {
     font: inherit; font-size: 14px; color: var(--text); background: var(--page);
@@ -171,7 +192,7 @@
   .chip {
     font-family: var(--mono); font-size: 12px; color: var(--text-2);
     background: var(--page); border: 1px solid var(--border);
-    border-radius: 7px; padding: 3px 8px;
+    border-radius: 7px; padding: 3px 8px; cursor: help;
   }
   .chip b { color: var(--text); font-weight: 600; }
 
@@ -257,6 +278,7 @@
 <div class="wrap">
   <header class="hero">
     <div class="brand">
+      <span class="logo" aria-hidden="true">🔔<span class="logo-taco">🌮</span></span>
       <h1>TACO-BELL</h1>
       <span class="tag">Explorer</span>
       <button class="like-btn" id="likeBtn" type="button" aria-pressed="false"
@@ -267,8 +289,9 @@
     </div>
     <p class="full-name">Tensor Archive of Conformal Output — Best Ever Lattice Labour</p>
     <p class="lede">
-      Each run here comes from a Tensor Network Renormalization (TNR) calculation on the
-      2D φ⁴ lattice model. Starting from a bare mass μ₀² and coupling λ, TNR coarse-grains
+      Each run here comes from a Tensor Network Renormalization (TNR) calculation, computed with
+      <a href="https://github.com/QuantumKitHub/TNRKit.jl/" target="_blank" rel="noopener">TNRKit.jl</a>,
+      on the 2D φ⁴ lattice model. Starting from a bare mass μ₀² and coupling λ, TNR coarse-grains
       the lattice step by step until the tensor settles onto a fixed point — and the
       spectrum of that fixed point is a conformal field theory (CFT): a central charge
       <span style="font-family:var(--mono)">c</span> and a tower of scaling dimensions
@@ -280,31 +303,31 @@
 
   <div class="panel controls" id="controls">
     <div class="field">
-      <label for="model">model</label>
+      <label for="model" title="phi4_real or phi4_complex — whether the scalar field φ is real- or complex-valued.">model</label>
       <select id="model"></select>
     </div>
     <div class="field">
-      <label for="symmetry">symmetry</label>
+      <label for="symmetry" title="The manifest symmetry enforced on the tensor's legs: Z2 for real φ⁴, U(1)/O(2) for complex φ⁴.">symmetry</label>
       <select id="symmetry"></select>
     </div>
     <div class="field">
-      <label for="algorithm">algorithm</label>
+      <label for="algorithm" title="Which TNR coarse-graining scheme produced this fixed point (e.g. LoopTNR).">algorithm</label>
       <select id="algorithm"></select>
     </div>
     <div class="field">
-      <label for="chi">χ</label>
+      <label for="chi" title="Bond dimension — the max number of states kept when truncating the tensor network at each RG step. Higher χ = more accurate, more expensive.">χ</label>
       <select id="chi"></select>
     </div>
     <div class="field">
-      <label for="K">K</label>
+      <label for="K" title="Initial truncation rank used before the first RG step.">K</label>
       <select id="K"></select>
     </div>
     <div class="field">
-      <label for="mu0">μ₀²</label>
+      <label for="mu0" title="Bare mass squared — the coefficient of the quadratic (φ²) term in the lattice action. Tunes how close the model sits to its critical point.">μ₀²</label>
       <input id="mu0" type="number" step="0.1" value="-1.5">
     </div>
     <div class="field">
-      <label for="lambda">λ</label>
+      <label for="lambda" title="Quartic coupling — the coefficient of the (φ²)² self-interaction term in the lattice action.">λ</label>
       <input id="lambda" type="number" step="0.1" value="0.5">
     </div>
     <button id="findBtn">Find</button>
@@ -549,14 +572,28 @@
     var chips = $("paramChips");
     chips.textContent = "";
     [
-      ["model", match.model], ["symmetry", match.symmetry], ["algorithm", match.algorithm],
-      ["χ", match.chi], ["K", match.K], ["μ₀²", fmtNum(match.mu0_sq, 3)], ["λ", fmtNum(match.lambda, 3)],
-      ["iterations", match.n_iterations],
-    ].forEach(function (pair) {
+      ["model", match.model,
+        "phi4_real or phi4_complex — whether the scalar field φ is real- or complex-valued. Real φ⁴ only has the φ→-φ symmetry; complex φ⁴ has a continuous phase symmetry instead."],
+      ["symmetry", match.symmetry,
+        "The manifest symmetry enforced on the tensor's legs: Z2 for real φ⁴, U(1)/O(2) for complex φ⁴."],
+      ["algorithm", match.algorithm,
+        "Which TNR coarse-graining scheme produced this fixed point."],
+      ["χ", match.chi,
+        "Bond dimension — the maximum number of states kept when truncating the tensor network at each RG step. Higher χ = more accurate, more expensive."],
+      ["K", match.K,
+        "Initial truncation rank used before the first RG step."],
+      ["μ₀² (bare mass²)", fmtNum(match.mu0_sq, 3),
+        "The bare mass squared — the coefficient of the quadratic (φ²) term in the lattice action. Tunes how close the model sits to its critical point."],
+      ["λ (coupling)", fmtNum(match.lambda, 3),
+        "The quartic coupling — the coefficient of the (φ²)² self-interaction term in the lattice action."],
+      ["iterations", match.n_iterations,
+        "How many RG (coarse-graining) steps were stored for this run."],
+    ].forEach(function (t) {
       var chip = document.createElement("span");
       chip.className = "chip";
-      var b = document.createElement("b"); b.textContent = pair[1];
-      chip.appendChild(document.createTextNode(pair[0] + " "));
+      chip.title = t[2];
+      var b = document.createElement("b"); b.textContent = t[1];
+      chip.appendChild(document.createTextNode(t[0] + " "));
       chip.appendChild(b);
       chips.appendChild(chip);
     });

@@ -496,6 +496,14 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 The test suite runs entirely against temporary databases, so it never
 touches the real `db/` directory.
 
+## License
+
+Split, since this repo is both a package and a dataset:
+
+- **Code** (everything except `db/`) — [MIT](LICENSE).
+- **Data** (`db/`) — [CC BY 4.0](db/LICENSE): reuse it for anything,
+  including commercially, as long as you credit this repository.
+
 ## Roadmap
 
 - [ ] TNRKit callback hook: `insert_run!` triggered automatically at convergence

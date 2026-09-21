@@ -70,7 +70,30 @@
     flex-direction: column;
     gap: 10px;
   }
-  header.hero .brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header.hero .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .like-btn {
+    margin-left: auto; display: flex; align-items: center; gap: 7px;
+    font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2);
+    background: var(--page); border: 1px solid var(--border); border-radius: 999px;
+    padding: 7px 14px; cursor: pointer;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .like-btn:hover { border-color: var(--series-2); color: var(--text); }
+  .like-btn:active { transform: scale(0.95); }
+  .like-btn:focus-visible { outline: 2px solid var(--series-2); outline-offset: 2px; }
+  .like-btn.liked { background: var(--series-2); border-color: var(--series-2); color: #fff; }
+  .like-btn .like-icon { font-size: 16px; line-height: 1; }
+  @media (max-width: 480px) { .like-btn .like-label { display: none; } }
+
+  .taco-particle {
+    position: fixed; font-size: 22px; pointer-events: none; z-index: 50; top: 0; left: 0;
+    animation-name: taco-fall; animation-timing-function: cubic-bezier(.35,.6,.6,1); animation-fill-mode: forwards;
+  }
+  @keyframes taco-fall {
+    0%   { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+    100% { transform: translate(var(--dx), 320px) rotate(var(--rot)); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .taco-particle { display: none; } }
   header.hero h1 {
     font-size: 34px; margin: 0; letter-spacing: -0.02em; font-weight: 800;
     color: var(--series-1);
@@ -223,8 +246,10 @@
 
   .loading-note { color: var(--muted); font-size: 12.5px; font-family: var(--mono); padding: 20px 0; text-align: center; }
 
-  footer { color: var(--muted); font-size: 12px; text-align: center; font-family: var(--mono); }
-  footer a { color: inherit; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; font-family: var(--mono); line-height: 1.7; }
+  footer a { color: var(--series-1); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer .credit { color: var(--text-2); }
 
   [hidden] { display: none !important; }
 </style>
@@ -234,6 +259,11 @@
     <div class="brand">
       <h1>TACO-BELL</h1>
       <span class="tag">Explorer</span>
+      <button class="like-btn" id="likeBtn" type="button" aria-pressed="false"
+              title="Saved in your browser only — not a shared count, just a fun little marker for you.">
+        <span class="like-icon">🌮</span>
+        <span class="like-label">Like this database</span>
+      </button>
     </div>
     <p class="full-name">Tensor Archive of Conformal Output — Best Ever Lattice Labour</p>
     <p class="lede">
@@ -353,7 +383,13 @@
     </div>
   </div>
 
-  <footer id="footer"></footer>
+  <footer>
+    <div class="credit">
+      Built by <a href="https://github.com/JaridPiceu" target="_blank" rel="noopener">Jarid Piceu</a>
+      · vibe-coded with Claude 🤖
+    </div>
+    <div id="footer"></div>
+  </footer>
 </div>
 
 <script>
@@ -827,6 +863,55 @@
 
     renderResult();
   }
+
+  // ---- fun gimmick: a taco-rain burst + a "like" that's just for you ----
+  // No backend on a static page, so this is honestly a per-browser toggle
+  // (localStorage), not a shared/global like count — the button says so.
+  function tacoBurst(originEl) {
+    var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) return;
+    var rect = originEl.getBoundingClientRect();
+    var n = 16;
+    for (var i = 0; i < n; i++) {
+      var span = document.createElement("span");
+      span.textContent = "🌮";
+      span.className = "taco-particle";
+      var dx = (Math.random() - 0.5) * 260;
+      var dur = 700 + Math.random() * 500;
+      var rot = (Math.random() - 0.5) * 720;
+      span.style.left = (rect.left + rect.width / 2) + "px";
+      span.style.top = (rect.top + rect.height / 2) + "px";
+      span.style.setProperty("--dx", dx + "px");
+      span.style.setProperty("--rot", rot + "deg");
+      span.style.animationDuration = dur + "ms";
+      document.body.appendChild(span);
+      (function (el, ms) { setTimeout(function () { el.remove(); }, ms + 50); })(span, dur);
+    }
+  }
+
+  function initLike() {
+    var LIKE_KEY = "tacobell_liked";
+    var btn = $("likeBtn");
+    if (!btn) return;
+    var label = btn.querySelector(".like-label");
+    var liked = false;
+    try { liked = localStorage.getItem(LIKE_KEY) === "1"; } catch (e) { /* private window etc. */ }
+
+    function render() {
+      btn.classList.toggle("liked", liked);
+      btn.setAttribute("aria-pressed", String(liked));
+      label.textContent = liked ? "Liked!" : "Like this database";
+    }
+    render();
+
+    btn.addEventListener("click", function () {
+      liked = !liked;
+      try { localStorage.setItem(LIKE_KEY, liked ? "1" : "0"); } catch (e) { /* ignore */ }
+      render();
+      if (liked) tacoBurst(btn);
+    });
+  }
+  initLike();
 
   fetch("data/tacobell.json")
     .then(function (r) { return r.json(); })

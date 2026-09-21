@@ -1,0 +1,109 @@
+created_at = "2026-09-21T11:26:52.073"
+runtime_s = 49411.554319424
+id = "8833151d-ed0c-4c21-a2be-89f9c2bbf2d6"
+source_file = "Re_CFT_TransLine_K40truncrank48_niter18_μ0-0.7219_λ0.5.jld2"
+
+[[iterations]]
+central_charge = 0.8480076583275313
+iteration = 0
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5451260468664837
+iteration = 1
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.6344264296112199
+iteration = 2
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5367611067531256
+iteration = 3
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5420397537897136
+iteration = 4
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5134298196438163
+iteration = 5
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5112424622498125
+iteration = 6
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5035264813536048
+iteration = 7
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5026764618635746
+iteration = 8
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5006240814032499
+iteration = 9
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.5001494209948162
+iteration = 10
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.499122013327435
+iteration = 11
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.4979728382095678
+iteration = 12
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.495668525175247
+iteration = 13
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.4913250152390737
+iteration = 14
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.4827951938021863
+iteration = 15
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.46642171451795583
+iteration = 16
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.43599340560841976
+iteration = 17
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 0.38310146424126895
+iteration = 18
+notes = ""
+sectors = []
+
+[params]
+chi = 48
+symmetry = "Z2"
+model = "phi4_real"
+algorithm = "LoopTNR"
+lambda = 0.5
+mu0_sq = -0.7219
+K = 40

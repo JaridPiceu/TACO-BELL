@@ -166,7 +166,7 @@ using TACOBELL
             @test occursin("0.125", run_text)
         end
 
-        @testset "export_json" begin
+        @testset "export_json (index)" begin
             hits = query_runs(; db_path=tmp, symmetry="Z2")
             json_out = joinpath(tmp, "export.json")
             export_json(hits; out=json_out)
@@ -178,8 +178,24 @@ using TACOBELL
             @test count(==('{'), text) == count(==('}'), text)
             @test count(==('['), text) == count(==(']'), text)
             @test occursin("\"model\":\"phi4_real\"", text)
-            @test occursin("\"n\":1", text)  # Z2 sector charge, from the real field name
             @test !occursin("NaN", text)     # NaN/missing must serialize as null, not raw NaN
+            @test !occursin("sectors", text) # sectors live in the per-run detail file, not the index
+        end
+
+        @testset "export_json (per-run detail)" begin
+            hits = query_runs(; db_path=tmp, symmetry="Z2")
+            detail_out = joinpath(tmp, "detail.json")
+            export_json(hits[1]; out=detail_out)
+            @test isfile(detail_out)
+            text = read(detail_out, String)
+            @test count(==('{'), text) == count(==('}'), text)
+            @test count(==('['), text) == count(==(']'), text)
+            @test occursin("\"n\":1", text)  # Z2 sector charge, from the real field name
+            @test occursin("\"iterations\"", text)
+
+            n = export_json_runs(hits; dir=joinpath(tmp, "runs_json"))
+            @test n == length(hits)
+            @test isfile(joinpath(tmp, "runs_json", hits[1].id * ".json"))
         end
     end
 
@@ -204,6 +220,28 @@ using TACOBELL
                 @test summary.inserted == 0
                 @test summary.failed == 3
                 @test summary.skipped == 0
+                @test isempty(query_runs(; db_path=dbdir))
+            end
+        end
+    end
+
+    @testset "ingest_directory_old! resilience" begin
+        # Same resilience contract as ingest_directory!, but for the
+        # pre-TNRKit-v0.5 reader — verified separately since it's a distinct
+        # code path (ingest_jld2_old!), not just a different default.
+        mktempdir() do datadir
+            mktempdir() do dbdir
+                write(joinpath(datadir, "old1.jld2"), "not an hdf5 file")
+                write(joinpath(datadir, "old2.jld2"), "also not an hdf5 file")
+
+                summary = ingest_directory_old!(datadir;
+                    infer_params = _ -> "x",
+                    db_path = dbdir,
+                )
+
+                @test summary.total == 2
+                @test summary.inserted == 0
+                @test summary.failed == 2
                 @test isempty(query_runs(; db_path=dbdir))
             end
         end

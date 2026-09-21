@@ -18,11 +18,13 @@ module TACOBELL
 
 using TOML, UUIDs, Dates, Printf, Statistics
 using HDF5
+using Plots
 
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
 export insert_run!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
 export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!, correct_field!
-export ingest_jld2!, ingest_directory!, generate_catalog, export_csv, export_json
+export ingest_jld2!, ingest_directory!, generate_catalog, export_csv, export_json, export_json_runs
+export ingest_jld2_old!, ingest_directory_old!
 export central_charge_trajectory, plateau_estimate, plateau_central_charge
 export plot_central_charge
 
@@ -89,7 +91,8 @@ CFT data extracted from **one iteration step** of a TNR run.
 Fields
 ------
 - `iteration`       : RG step index (0 = initial tensor)
-- `normalization`   : log of the per-site tensor norm at this step
+- `normalization`   : log of the per-site tensor norm at this step (not
+                      recorded in pre-TNRKit-v0.5 output — `missing` there)
 - `central_charge`  : extracted central charge `c`
 - `sectors`         : scaling dimensions grouped by symmetry sector
 - `notes`           : free-text annotation
@@ -103,7 +106,7 @@ sector a given Δ came from.
 """
 Base.@kwdef struct CFTResults
     iteration       :: Int
-    normalization   :: Float64
+    normalization   :: Union{Float64, Missing}              = missing
     central_charge  :: Union{Float64, Missing}              = missing
     sectors         :: Vector{ScalingDimSector}             = ScalingDimSector[]
     notes           :: String                               = ""
@@ -170,8 +173,9 @@ end
 
 function Base.show(io::IO, r::CFTResults)
     cc = r.central_charge === missing ? "—" : @sprintf("%.4f", r.central_charge)
+    norm = r.normalization === missing ? "—" : @sprintf("%.4f", r.normalization)
     populated = count(s -> !isempty(s.dims), r.sectors)
-    print(io, "CFTResults(iteration=", r.iteration, ", norm=", @sprintf("%.4f", r.normalization),
+    print(io, "CFTResults(iteration=", r.iteration, ", norm=", norm,
           ", c=", cc, ", ", populated, "/", length(r.sectors), " sectors populated)")
 end
 
@@ -207,18 +211,18 @@ end
 function _results_to_dict(r::CFTResults)
     d = Dict{String,Any}(
         "iteration"     => r.iteration,
-        "normalization" => r.normalization,
         "notes"         => r.notes,
         "sectors"       => [_sector_to_dict(s) for s in r.sectors],
     )
     r.central_charge === missing || (d["central_charge"] = r.central_charge)
+    r.normalization  === missing || (d["normalization"]  = r.normalization)
     d
 end
 
 function _results_from_dict(d)
     CFTResults(
         iteration       = d["iteration"],
-        normalization   = d["normalization"],
+        normalization   = get(d, "normalization",   missing),
         central_charge  = get(d, "central_charge",  missing),
         sectors         = [_sector_from_dict(s) for s in get(d, "sectors", [])],
         notes           = get(d, "notes", ""),
@@ -564,6 +568,19 @@ function ingest_directory!(
         extension   :: String  = ".jld2",
         allow_duplicate :: Bool = false,
     )
+    _ingest_directory_generic!(ingest_jld2!, dir; infer_params, db_path, extension, allow_duplicate)
+end
+
+# Shared resilience loop behind ingest_directory!/ingest_directory_old! — the
+# only thing that differs between the two is which single-file function
+# ingests each match, so it's a parameter rather than duplicated code.
+function _ingest_directory_generic!(
+        ingest_fn, dir :: String;
+        infer_params,
+        db_path     :: String  = DB_PATH(),
+        extension   :: String  = ".jld2",
+        allow_duplicate :: Bool = false,
+    )
     files = String[]
     for (root, _, fnames) in walkdir(dir)
         for fn in fnames
@@ -578,7 +595,7 @@ function ingest_directory!(
         label = "[$i/$(length(files))] $(basename(filepath))"
         try
             params = infer_params(filepath)
-            ingest_jld2!(filepath, params; db_path, allow_duplicate)
+            ingest_fn(filepath, params; db_path, allow_duplicate)
             n_ok += 1
             @info "$label -> inserted"
         catch err
@@ -597,6 +614,143 @@ function ingest_directory!(
     summary = (total=length(files), inserted=n_ok, skipped=n_skip, failed=n_err)
     @info "Bulk ingest complete" summary...
     return summary
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API — legacy JLD2 ingestion (pre-TNRKit-v0.5 output)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    ingest_jld2_old!(filepath, model; symmetry="", algorithm="", db_path, allow_duplicate)
+    ingest_jld2_old!(filepath, params::RunParameters; db_path, allow_duplicate)
+
+Like [`ingest_jld2!`](@ref), but for JLD2 output from **before TNRKit
+v0.5.0**, which stored CFT data in a different, less structured shape: each
+iteration is a plain `Dict` (keyed `"c"` for the central charge and, for
+every other key, a charge/irrep label) rather than a `(normalization,
+CFTData)` tuple, and the top-level bond-dimension key is named `ndimtrunc`
+instead of `chi` (`K` means the same thing in both). There is no recorded
+per-iteration normalization in these files, so
+`CFTResults.normalization` comes back `missing` for every iteration
+ingested this way. `symmetry`/`algorithm` are never stored in old files
+either — always supply them (old TACO-BELL-adjacent calculations of this
+vintage were U(1)-symmetric, going by the sector labels' `charge` field
+name, but confirm against your own script before assuming that).
+
+# Example
+```julia
+using TACOBELL
+ingest_jld2_old!("Com_CFT_μ0-0.01_λ0.01_K10truncrank16_niter15.jld2", "phi4_complex";
+                  symmetry="U(1)", algorithm="LoopTNR")
+```
+"""
+function ingest_jld2_old!(
+        filepath :: String,
+        model    :: AbstractString;
+        symmetry :: AbstractString = "",
+        algorithm :: AbstractString = "",
+        db_path  :: String  = DB_PATH(),
+        allow_duplicate :: Bool = false,
+    )
+    params = RunParameters(
+        model=String(model), symmetry=String(symmetry), algorithm=String(algorithm),
+        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
+    )
+    ingest_jld2_old!(filepath, params; db_path, allow_duplicate)
+end
+
+function ingest_jld2_old!(
+        filepath :: String,
+        params   :: RunParameters;
+        db_path  :: String  = DB_PATH(),
+        allow_duplicate :: Bool = false,
+    )
+    HDF5.h5open(filepath, "r") do f
+        chi    = Int(HDF5.read(f["ndimtrunc"]))
+        K      = Int(HDF5.read(f["K"]))
+        mu0_sq = Float64(HDF5.read(f["μ0"]))
+        lambda = Float64(HDF5.read(f["λ"]))
+        t      = Float64(HDF5.read(f["t"]))
+
+        symmetry  = haskey(f, "symmetry")  ? String(HDF5.read(f["symmetry"]))  : params.symmetry
+        algorithm = haskey(f, "algorithm") ? String(HDF5.read(f["algorithm"])) : params.algorithm
+
+        filled_params = RunParameters(
+            model=params.model, symmetry=symmetry, algorithm=algorithm,
+            chi=chi, K=K, mu0_sq=mu0_sq, lambda=lambda,
+        )
+
+        data_refs = HDF5.read(f["data"])   # Vector of object references, one per iteration
+        iters = CFTResults[]
+
+        for (i, ref) in enumerate(data_refs)
+            step = i - 1
+            cc, sectors = _parse_old_iteration(f, ref)
+            push!(iters, CFTResults(
+                iteration      = step,
+                normalization  = missing,
+                central_charge = cc,
+                sectors        = sectors,
+            ))
+        end
+
+        insert_run!(filled_params, iters;
+                    db_path, allow_duplicate,
+                    source_file=basename(filepath),
+                    runtime_s=t)
+    end
+end
+
+# Old-format iteration: a plain Dict serialized the same kvvec way as the
+# new format's sector `structure` (see `_parse_sectors`), but here *both*
+# the key and the value of each pair are References, and there's no
+# separate "data"/"structure" split — a sector's value vector IS its list
+# of scaling dimensions directly. One key is special: the string "c" maps
+# to the central charge instead of a sector.
+function _parse_old_iteration(f, data_ref)
+    dict_val = f[data_ref][]
+    kvvec = f[_field(dict_val, "kvvec")][]
+
+    cc = missing
+    sectors = ScalingDimSector[]
+    for pair_ref in kvvec
+        pair_val = f[pair_ref][]
+        key = f[_field(pair_val, "first")][]
+        val = f[_field(pair_val, "second")][]
+
+        if key isa AbstractString
+            key == "c" && (cc = Float64(_field(val, "re")))
+            # any other string-keyed scalar is an unrecognized diagnostic — skip it
+        else
+            charge = Dict{String, Float64}(
+                String(name) => _charge_component(getfield(key, name))
+                for name in propertynames(key)
+            )
+            dims = Float64[_field(v, "re") for v in val]
+            isempty(dims) && continue
+            push!(sectors, ScalingDimSector(charge=charge, dims=sort(dims)))
+        end
+    end
+    return cc, sectors
+end
+
+"""
+    ingest_directory_old!(dir; infer_params, db_path, extension=".jld2", allow_duplicate=false)
+
+Like [`ingest_directory!`](@ref), but for a directory of pre-TNRKit-v0.5
+output — every matching file is read with [`ingest_jld2_old!`](@ref)
+instead of [`ingest_jld2!`](@ref). Same resilience behavior (a bad or
+already-ingested file doesn't abort the batch) and the same `infer_params`
+contract (return a model name, or a full `RunParameters`).
+"""
+function ingest_directory_old!(
+        dir :: String;
+        infer_params,
+        db_path     :: String  = DB_PATH(),
+        extension   :: String  = ".jld2",
+        allow_duplicate :: Bool = false,
+    )
+    _ingest_directory_generic!(ingest_jld2_old!, dir; infer_params, db_path, extension, allow_duplicate)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -785,19 +939,26 @@ Plot the central charge as a function of RG iteration for one run — the
 quickest way to eyeball whether/where it converged. `kwargs` are passed
 through to `Plots.plot` (e.g. `title`, `ylims`).
 
-!!! note "Requires Plots.jl"
-    This method is provided by a package extension and only becomes
-    available once you `using Plots`. Run `using Pkg; Pkg.add("Plots")`
-    once if you don't already have it — note that, like any `Pkg.add`,
-    this will add Plots as an ordinary dependency of this environment.
-
 # Example
 ```julia
-using TACOBELL, Plots
+using TACOBELL
 plot_central_charge(runs[1])
 ```
 """
-function plot_central_charge end
+function plot_central_charge(entry::DatabaseEntry; kwargs...)
+    sorted = sort(entry.iterations, by = r -> r.iteration)
+    xs = Int[r.iteration for r in sorted if r.central_charge !== missing]
+    ys = Float64[r.central_charge for r in sorted if r.central_charge !== missing]
+
+    p = entry.params
+    Plots.plot(xs, ys;
+        marker = :circle, legend = false,
+        xlabel = "RG iteration", ylabel = "central charge c",
+        title = "$(p.model), $(p.symmetry), χ=$(p.chi), μ₀²=$(p.mu0_sq), λ=$(p.lambda)",
+        titlefontsize = 10,
+        kwargs...,
+    )
+end
 
 """
     find_closest(mu0_sq, lambda; filters...) -> Union{DatabaseEntry, Nothing}
@@ -1006,7 +1167,11 @@ end
 # pulling in a JSON dependency for one export function.
 _to_json(x::Missing) = "null"
 _to_json(x::Bool) = x ? "true" : "false"
-_to_json(x::Real) = (isnan(x) || isinf(x)) ? "null" : string(x)
+_to_json(x::Integer) = string(x)
+# Rounded to 7 significant digits: still far more precision than physically
+# meaningful at any χ this package deals with, but roughly halves the size
+# of exports with thousands of runs' worth of scaling dimensions in them.
+_to_json(x::AbstractFloat) = (isnan(x) || isinf(x)) ? "null" : string(round(x, sigdigits=7))
 _to_json(x::AbstractString) = "\"" * replace(replace(replace(replace(replace(
     x, "\\" => "\\\\"), "\"" => "\\\""), "\n" => "\\n"), "\r" => "\\r"), "\t" => "\\t") * "\""
 _to_json(x::AbstractDict) = "{" * join((_to_json(string(k)) * ":" * _to_json(v) for (k, v) in x), ",") * "}"
@@ -1015,11 +1180,12 @@ _to_json(x::Union{AbstractVector, Tuple}) = "[" * join((_to_json(v) for v in x),
 """
     export_json(entries=query_runs(); out="tacobell_export.json") -> String
 
-Write a summary of the database to a single JSON file: one object per run,
-with its parameters and the scaling-dimension sectors of its final
-iteration (not the full per-iteration trajectory — use [`export_csv`](@ref)
-for that). This is what feeds the static "browse the database" webpage
-(see `web/` in the repository), but is also just a portable,
+Write a lightweight **index** of the database to a single JSON file: one
+object per run with its parameters and (plateau-based) central charge, but
+not its per-iteration trajectory or sectors — see the `DatabaseEntry`
+method below for that. This is what feeds the static "browse the database"
+webpage's search/matching (see `web/` in the repository), which then fetches
+a matched run's full detail lazily; it's also just a portable,
 language-agnostic snapshot for any other tool to consume. Pass a filtered
 result from [`query_runs`](@ref) to export just a selection. Returns the
 path written.
@@ -1027,21 +1193,61 @@ path written.
 function export_json(entries::Vector{DatabaseEntry} = query_runs(); out::String = "tacobell_export.json")
     runs = map(entries) do e
         p = e.params
-        fi = isempty(e.iterations) ? nothing : final_iteration(e)
         Dict{String, Any}(
             "id" => e.id, "model" => p.model, "symmetry" => p.symmetry, "algorithm" => p.algorithm,
             "chi" => p.chi, "K" => p.K, "mu0_sq" => p.mu0_sq, "lambda" => p.lambda,
             "n_iterations" => length(e.iterations),
             "central_charge" => (c = _best_c(e.iterations); isnan(c) ? missing : c),
-            "final_iteration" => fi === nothing ? missing : fi.iteration,
-            "sectors" => fi === nothing ? [] :
-                [Dict{String, Any}("charge" => sec.charge, "dims" => sec.dims) for sec in fi.sectors],
         )
     end
     payload = Dict{String, Any}("generated_at" => string(now()), "runs" => runs)
     write(out, _to_json(payload))
     @info "Wrote $(length(entries)) run(s) to $out"
     return out
+end
+
+"""
+    export_json(entry::DatabaseEntry; out=entry.id*".json") -> String
+
+Write one run's full per-iteration **detail** — normalization, central
+charge, and every populated sector's scaling dimensions, at every stored
+iteration — to a single JSON file. This is the counterpart to the index
+written by the `Vector{DatabaseEntry}` method: the webpage fetches one of
+these lazily, only for the run it actually matched, rather than loading
+every run's whole history up front. Returns the path written.
+"""
+function export_json(entry::DatabaseEntry; out::String = entry.id * ".json")
+    iters = [
+        Dict{String, Any}(
+            "iteration" => r.iteration,
+            "normalization" => r.normalization,
+            "central_charge" => r.central_charge,
+            "sectors" => [Dict{String, Any}("charge" => sec.charge, "dims" => sec.dims) for sec in r.sectors],
+        )
+        for r in sort(entry.iterations, by = x -> x.iteration)
+    ]
+    payload = Dict{String, Any}("id" => entry.id, "iterations" => iters)
+    write(out, _to_json(payload))
+    @info "Wrote full trajectory for $(first(entry.id, 8))… to $out"
+    return out
+end
+
+"""
+    export_json_runs(entries=query_runs(); dir="web/data/runs") -> Int
+
+Write the per-run detail JSON (see [`export_json`](@ref)'s `DatabaseEntry`
+method) for every given entry into `dir`, one `<id>.json` per run. Pairs
+with `export_json(entries; out="web/data/tacobell.json")` to (re)build
+everything the Explorer webpage needs after adding new runs. Returns the
+number of files written.
+"""
+function export_json_runs(entries::Vector{DatabaseEntry} = query_runs(); dir::String = joinpath("web", "data", "runs"))
+    mkpath(dir)
+    for e in entries
+        export_json(e; out = joinpath(dir, e.id * ".json"))
+    end
+    @info "Wrote $(length(entries)) run detail file(s) to $dir"
+    return length(entries)
 end
 
 """

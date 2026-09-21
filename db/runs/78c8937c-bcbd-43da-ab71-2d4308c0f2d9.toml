@@ -1,0 +1,94 @@
+created_at = "2026-09-20T18:51:21.960"
+runtime_s = 9404.491069321
+id = "78c8937c-bcbd-43da-ab71-2d4308c0f2d9"
+source_file = "Com_CFT_μ0-0.263_λ0.1_K12truncrank48_niter15_NEWVERSION.jld2"
+
+[[iterations]]
+central_charge = 1.875164321332961
+iteration = 0
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.2397113096574237
+iteration = 1
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.434943487484046
+iteration = 2
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.2160361815375256
+iteration = 3
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.2075703683030616
+iteration = 4
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.1207392402640655
+iteration = 5
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.090699137702809
+iteration = 6
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0547104567575385
+iteration = 7
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0388755682958
+iteration = 8
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0248711907930246
+iteration = 9
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0171872069405905
+iteration = 10
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0110300172365994
+iteration = 11
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0077234250439815
+iteration = 12
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0052446026803985
+iteration = 13
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0031912402014866
+iteration = 14
+notes = ""
+sectors = []
+[[iterations]]
+central_charge = 1.0014672856259044
+iteration = 15
+notes = ""
+sectors = []
+
+[params]
+chi = 48
+symmetry = "U(1)"
+model = "phi4_complex"
+algorithm = "LoopTNR"
+lambda = 0.1
+mu0_sq = -0.263
+K = 12

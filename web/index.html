@@ -4,15 +4,16 @@
     color-scheme: light;
     --page:        #f9f9f7;
     --surface:     #fcfcfb;
+    --surface-2:   #f3f2ee;
     --text:        #0b0b0b;
     --text-2:      #52514e;
     --muted:       #898781;
     --grid:        #e1e0d9;
     --baseline:    #c3c2b7;
     --border:      rgba(11,11,11,0.10);
-    --series-1:    #2a78d6;   /* dataset points / line */
-    --series-1-wash: rgba(42,120,214,0.10);
-    --series-2:    #eb6834;   /* selected / matched point */
+    --series-1:    #2a78d6;   /* primary series / dataset points */
+    --series-2:    #eb6834;   /* selected / matched point, Δ rank 2 */
+    --series-3:    #1baf7a;   /* Δ rank 3 */
     --mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -21,6 +22,7 @@
       color-scheme: dark;
       --page:        #0d0d0d;
       --surface:     #1a1a19;
+      --surface-2:   #232322;
       --text:        #ffffff;
       --text-2:      #c3c2b7;
       --muted:       #898781;
@@ -28,14 +30,15 @@
       --baseline:    #383835;
       --border:      rgba(255,255,255,0.10);
       --series-1:    #3987e5;
-      --series-1-wash: rgba(57,135,229,0.14);
       --series-2:    #d95926;
+      --series-3:    #199e70;
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --page:        #0d0d0d;
     --surface:     #1a1a19;
+    --surface-2:   #232322;
     --text:        #ffffff;
     --text-2:      #c3c2b7;
     --muted:       #898781;
@@ -43,8 +46,8 @@
     --baseline:    #383835;
     --border:      rgba(255,255,255,0.10);
     --series-1:    #3987e5;
-    --series-1-wash: rgba(57,135,229,0.14);
     --series-2:    #d95926;
+    --series-3:    #199e70;
   }
 
   * { box-sizing: border-box; }
@@ -55,13 +58,30 @@
     padding-inline: 16px;
     padding-block: 20px calc(32px + env(safe-area-inset-bottom, 0px));
   }
-  .wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  .wrap { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 
-  header h1 {
-    font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; text-wrap: balance;
+  /* ---- header ---- */
+  header.hero {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 22px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
-  header p { margin: 0; color: var(--text-2); font-size: 13.5px; max-width: 62ch; }
-  header .stamp { color: var(--muted); font-size: 12px; margin-top: 6px; font-family: var(--mono); }
+  header.hero .eyebrow {
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--series-1);
+  }
+  header.hero h1 { font-size: 26px; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  header.hero p.lede { margin: 0; color: var(--text-2); font-size: 14px; max-width: 72ch; line-height: 1.55; }
+  header.hero .stats {
+    display: flex; flex-wrap: wrap; gap: 18px 28px; margin-top: 6px;
+    padding-top: 14px; border-top: 1px solid var(--grid);
+  }
+  header.hero .stat .n { font-size: 19px; font-weight: 600; font-family: var(--mono); }
+  header.hero .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 
   .panel {
     background: var(--surface);
@@ -69,15 +89,19 @@
     border-radius: 14px;
     padding: 16px;
   }
+  .panel > h2.panel-title {
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin: 0 0 12px;
+  }
 
-  /* ---- controls: one row, wraps on narrow screens ---- */
+  /* ---- controls ---- */
   .controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 14px; }
   .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .field label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--muted); font-family: var(--mono);
   }
-  .field select, .field input {
+  .field select, .field input[type="number"] {
     font: inherit; font-size: 14px; color: var(--text); background: var(--page);
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
     min-width: 8ch;
@@ -90,15 +114,16 @@
     padding: 8px 18px; cursor: pointer; height: 34px;
   }
   #findBtn:hover { filter: brightness(1.08); }
-  #findBtn:focus-visible, select:focus-visible, input:focus-visible {
+  #findBtn:focus-visible, select:focus-visible, input:focus-visible, button:focus-visible {
     outline: 2px solid var(--series-1); outline-offset: 1px;
   }
 
-  .results { display: grid; grid-template-columns: minmax(0,1.05fr) minmax(0,1.35fr); gap: 20px; }
-  @media (max-width: 720px) { .results { grid-template-columns: 1fr; } }
+  .results { display: flex; flex-direction: column; gap: 16px; }
+  .results-top { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+  @media (max-width: 760px) { .results-top { grid-template-columns: 1fr; } }
 
   .match-note {
-    font-size: 12.5px; color: var(--text-2); display: flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--text-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     margin-bottom: 10px;
   }
   .match-note .pill {
@@ -107,17 +132,32 @@
   }
   .match-note .pill.exact { color: var(--series-1); border-color: var(--series-1); }
 
-  .hero-c { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
-  .hero-c .val { font-size: 42px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; }
+  .hero-c { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
+  .hero-c .val { font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; }
   .hero-c .label { color: var(--muted); font-size: 12.5px; }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 12px 0 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 10px 0 16px; }
   .chip {
     font-family: var(--mono); font-size: 12px; color: var(--text-2);
     background: var(--page); border: 1px solid var(--border);
     border-radius: 7px; padding: 3px 8px;
   }
   .chip b { color: var(--text); font-weight: 600; }
+
+  /* ---- iteration slider ---- */
+  .iter-row {
+    display: flex; align-items: center; gap: 10px; background: var(--page);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 16px;
+  }
+  .iter-row label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+  .iter-row input[type="range"] { flex: 1; accent-color: var(--series-1); }
+  .iter-row .iter-val { font-family: var(--mono); font-size: 13px; min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
+  .iter-row .plateau-btn {
+    font: inherit; font-size: 11px; font-family: var(--mono); color: var(--series-1); background: none;
+    border: 1px solid var(--series-1); border-radius: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+  }
+  .iter-row .plateau-btn:hover { background: var(--series-1); color: #fff; }
+  .iter-row .plateau-btn.at-plateau { background: var(--series-1); color: #fff; }
 
   table.sectors { width: 100%; border-collapse: collapse; font-size: 13px; }
   table.sectors caption {
@@ -136,21 +176,24 @@
   .dims-more { color: var(--series-1); cursor: pointer; background: none; border: none; font: inherit;
     font-family: var(--mono); padding: 0; text-decoration: underline; text-underline-offset: 2px; }
 
+  /* ---- charts (shared) ---- */
+  .chart-block + .chart-block { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--grid); }
   .chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
-  .chart-head h2 { font-size: 13px; margin: 0; font-weight: 600; }
-  .chart-head .legend { font-size: 11.5px; color: var(--muted); display: flex; gap: 12px; font-family: var(--mono); }
+  .chart-head h3 { font-size: 12.5px; margin: 0; font-weight: 600; }
+  .chart-head .legend { font-size: 11.5px; color: var(--muted); display: flex; gap: 12px; font-family: var(--mono); flex-wrap: wrap; }
   .legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; position: relative; top: 0.5px; }
   .legend .dot.s1 { background: var(--series-1); }
   .legend .dot.s2 { background: var(--series-2); }
+  .legend .dot.s3 { background: var(--series-3); }
 
-  svg.chart { width: 100%; height: auto; overflow: visible; }
-  svg.chart text { font-family: var(--mono); fill: var(--muted); font-size: 10.5px; }
+  svg.chart { width: 100%; height: auto; overflow: visible; display: block; }
+  svg.chart text { font-family: var(--mono); fill: var(--muted); font-size: 10px; }
   svg.chart .axis-line { stroke: var(--baseline); stroke-width: 1; }
   svg.chart .grid-line { stroke: var(--grid); stroke-width: 1; }
-  svg.chart .series-line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  svg.chart .pt { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
+  svg.chart .series-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  svg.chart .pt { stroke: var(--surface); stroke-width: 2; }
   svg.chart .pt-hit { fill: transparent; cursor: pointer; }
-  svg.chart .pt.selected { fill: var(--series-2); }
+  svg.chart .pt.selected { r: 5.5; }
   svg.chart .crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0; pointer-events: none; }
 
   .tooltip {
@@ -162,13 +205,15 @@
   .chart-wrap { position: relative; }
   .table-toggle {
     font: inherit; font-size: 11.5px; color: var(--text-2); background: none; border: 1px solid var(--border);
-    border-radius: 6px; padding: 3px 8px; cursor: pointer; font-family: var(--mono);
+    border-radius: 6px; padding: 3px 8px; cursor: pointer; font-family: var(--mono); margin-top: 8px;
   }
   .table-toggle:hover { color: var(--text); }
   table.slice { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; font-variant-numeric: tabular-nums; }
   table.slice th { text-align: right; color: var(--muted); font-weight: 500; font-size: 11px; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
   table.slice td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); font-family: var(--mono); }
   table.slice tr.match td { color: var(--series-2); font-weight: 600; }
+
+  .loading-note { color: var(--muted); font-size: 12.5px; font-family: var(--mono); padding: 20px 0; text-align: center; }
 
   footer { color: var(--muted); font-size: 12px; text-align: center; font-family: var(--mono); }
   footer a { color: inherit; }
@@ -177,10 +222,19 @@
 </style>
 
 <div class="wrap">
-  <header>
-    <h1>TACO-BELL Explorer</h1>
-    <p>Browse Tensor Network Renormalization results for the 2D φ⁴ model — pick a setup, give it μ₀² and λ, get the central charge and scaling dimensions TACO-BELL already computed for it.</p>
-    <div class="stamp" id="stamp">loading database…</div>
+  <header class="hero">
+    <span class="eyebrow">TACO-BELL · Tensor Archive of Conformal Output</span>
+    <h1>Explorer</h1>
+    <p class="lede">
+      Each run here comes from a Tensor Network Renormalization (TNR) calculation on the
+      2D φ⁴ lattice model. Starting from a bare mass μ₀² and coupling λ, TNR coarse-grains
+      the lattice step by step until the tensor settles onto a fixed point — and the
+      spectrum of that fixed point is a conformal field theory (CFT): a central charge
+      <span style="font-family:var(--mono)">c</span> and a tower of scaling dimensions
+      <span style="font-family:var(--mono)">Δ</span>, organized by symmetry sector. Pick a
+      setup below to see what's already been computed, instead of running it again.
+    </p>
+    <div class="stats" id="headerStats"></div>
   </header>
 
   <div class="panel controls" id="controls">
@@ -216,33 +270,72 @@
   </div>
 
   <div class="results" id="results" hidden>
-    <div class="panel" id="resultPanel">
-      <div class="match-note" id="matchNote"></div>
-      <div class="hero-c">
-        <span class="val" id="ccVal">—</span>
-        <span class="label">central charge <span style="font-family:var(--mono)">c</span></span>
+    <div class="results-top">
+      <div class="panel" id="resultPanel">
+        <h2 class="panel-title">Result</h2>
+        <div class="match-note" id="matchNote"></div>
+        <div class="hero-c">
+          <span class="val" id="ccVal">—</span>
+          <span class="label">central charge <span style="font-family:var(--mono)">c</span></span>
+        </div>
+        <div class="chips" id="paramChips"></div>
+
+        <div class="iter-row">
+          <label for="iterSlider">iteration</label>
+          <input id="iterSlider" type="range" min="0" max="1" step="1" value="0">
+          <span class="iter-val" id="iterVal">0</span>
+          <button class="plateau-btn" id="plateauBtn" type="button">plateau</button>
+        </div>
+
+        <table class="sectors" id="sectorTable">
+          <caption id="sectorCaption">scaling dimensions by sector</caption>
+          <thead>
+            <tr><th>sector</th><th>n</th><th>Δ range / values</th></tr>
+          </thead>
+          <tbody id="sectorBody"></tbody>
+        </table>
+        <div class="loading-note" id="detailLoading" hidden>loading run detail…</div>
       </div>
-      <div class="chips" id="paramChips"></div>
-      <table class="sectors" id="sectorTable">
-        <caption>scaling dimensions by sector, final iteration</caption>
-        <thead>
-          <tr><th>sector</th><th>n</th><th>Δ range / values</th></tr>
-        </thead>
-        <tbody id="sectorBody"></tbody>
-      </table>
+
+      <div class="panel" id="flowPanel">
+        <h2 class="panel-title">RG flow — this run</h2>
+
+        <div class="chart-block">
+          <div class="chart-head">
+            <h3>c vs iteration</h3>
+            <span class="legend"><span><span class="dot s1"></span>central charge</span></span>
+          </div>
+          <div class="chart-wrap">
+            <svg class="chart" id="chartIterC" viewBox="0 0 440 190" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="tooltip" id="tooltipIterC"></div>
+          </div>
+        </div>
+
+        <div class="chart-block">
+          <div class="chart-head">
+            <h3>lowest scaling dimensions vs iteration</h3>
+            <span class="legend" id="dimsLegend"></span>
+          </div>
+          <div class="chart-wrap">
+            <svg class="chart" id="chartIterDims" viewBox="0 0 440 190" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="tooltip" id="tooltipIterDims"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="panel">
+      <h2 class="panel-title" id="phaseTitle">Phase diagram — c vs μ₀²</h2>
       <div class="chart-head">
-        <h2 id="chartTitle">c vs μ₀²</h2>
+        <span></span>
         <span class="legend">
           <span><span class="dot s1"></span>runs in this slice</span>
           <span><span class="dot s2"></span>matched point</span>
         </span>
       </div>
       <div class="chart-wrap">
-        <svg class="chart" id="chart" viewBox="0 0 460 260" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="tooltip" id="tooltip"></div>
+        <svg class="chart" id="chartPhase" viewBox="0 0 900 220" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="tooltip" id="tooltipPhase"></div>
       </div>
       <button class="table-toggle" id="tableToggle">show as table</button>
       <table class="slice" id="sliceTable" hidden></table>
@@ -256,12 +349,16 @@
 (function () {
   "use strict";
 
-  var DATA = null;         // {generated_at, runs:[...]}
-  var CURRENT = null;      // last matched run
-  var CURRENT_SLICE = [];  // rows plotted in the chart
+  var INDEX = null;        // {generated_at, runs:[...]}   (lightweight, all runs)
+  var DETAIL_CACHE = {};   // id -> {id, iterations:[...]} (fetched lazily)
+  var CURRENT = null;      // matched index row
+  var CURRENT_DETAIL = null;
+  var CURRENT_ITER = 0;    // selected iteration number
+  var PLATEAU_ITER = 0;
 
   function $(id) { return document.getElementById(id); }
 
+  // ---------------------------------------------------------------- utils
   function fmtCharge(v) {
     if (Number.isInteger(v)) return String(v);
     var twice = v * 2;
@@ -272,6 +369,12 @@
     var keys = Object.keys(charge || {}).sort();
     if (keys.length === 0) return "trivial";
     return keys.map(function (k) { return k + "=" + fmtCharge(charge[k]); }).join(", ");
+  }
+  function chargeMagnitude(charge) {
+    var keys = Object.keys(charge || {});
+    var sum = 0;
+    keys.forEach(function (k) { sum += Math.abs(charge[k]); });
+    return sum;
   }
   function fmtNum(x, d) {
     if (x === null || x === undefined || Number.isNaN(x)) return "—";
@@ -299,47 +402,71 @@
       sel.appendChild(opt);
     });
   }
+  // flattened, sorted scaling dims for one iteration record (mirrors CFTResults.dims)
+  function flatDims(iterRecord) {
+    var all = [];
+    (iterRecord.sectors || []).forEach(function (s) { all = all.concat(s.dims); });
+    all.sort(function (a, b) { return a - b; });
+    return all;
+  }
+  // windowed-plateau search, mirroring TACOBELL.plateau_estimate's defaults
+  function plateauIterationIndex(values) {
+    var n = values.length;
+    if (n === 0) return 0;
+    var w = Math.min(5, n);
+    var skipfrac = 0.3;
+    var startMin = Math.max(0, Math.ceil(skipfrac * n));
+    var windows = [];
+    for (var i = 0; i <= n - w; i++) windows.push(i);
+    function std(i) {
+      var slice = values.slice(i, i + w);
+      var m = slice.reduce(function (a, b) { return a + b; }, 0) / slice.length;
+      var v = slice.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / slice.length;
+      return Math.sqrt(v);
+    }
+    var clean = windows.filter(function (i) { return i >= startMin; });
+    var candidates = clean.length ? clean : windows;
+    var best = candidates[0], bestStd = std(best);
+    candidates.forEach(function (i) { var s = std(i); if (s < bestStd) { bestStd = s; best = i; } });
+    return best + Math.floor((w - 1) / 2); // middle of the flattest window
+  }
+
+  // ---------------------------------------------------------- data fetch
+  function fetchDetail(id) {
+    if (DETAIL_CACHE[id]) return Promise.resolve(DETAIL_CACHE[id]);
+    return fetch("data/runs/" + id + ".json")
+      .then(function (r) { return r.json(); })
+      .then(function (d) { DETAIL_CACHE[id] = d; return d; });
+  }
 
   function currentFilters() {
     return {
-      model: $("model").value,
-      symmetry: $("symmetry").value,
-      algorithm: $("algorithm").value,
-      chi: $("chi").value,
-      K: $("K").value,
+      model: $("model").value, symmetry: $("symmetry").value, algorithm: $("algorithm").value,
+      chi: $("chi").value, K: $("K").value,
     };
   }
-
   function rowsMatchingScope(f) {
-    return DATA.runs.filter(function (r) {
-      return r.model === f.model &&
-        r.symmetry === f.symmetry &&
-        r.algorithm === f.algorithm &&
-        (f.chi === "" || String(r.chi) === f.chi) &&
-        (f.K === "" || String(r.K) === f.K);
+    return INDEX.runs.filter(function (r) {
+      return r.model === f.model && r.symmetry === f.symmetry && r.algorithm === f.algorithm &&
+        (f.chi === "" || String(r.chi) === f.chi) && (f.K === "" || String(r.K) === f.K);
     });
   }
-
-  // ---- cascading selects: each level's options depend on the ones above it ----
   function refreshSymmetry() {
     var model = $("model").value;
-    var opts = distinct(DATA.runs.filter(function (r) { return r.model === model; }), "symmetry");
-    fillSelect($("symmetry"), opts, false);
+    fillSelect($("symmetry"), distinct(INDEX.runs.filter(function (r) { return r.model === model; }), "symmetry"), false);
     refreshAlgorithm();
   }
   function refreshAlgorithm() {
     var model = $("model").value, symmetry = $("symmetry").value;
-    var opts = distinct(DATA.runs.filter(function (r) { return r.model === model && r.symmetry === symmetry; }), "algorithm");
-    fillSelect($("algorithm"), opts, false);
+    fillSelect($("algorithm"), distinct(INDEX.runs.filter(function (r) { return r.model === model && r.symmetry === symmetry; }), "algorithm"), false);
     refreshChiK();
   }
   function refreshChiK() {
     var f = currentFilters();
-    var scoped = DATA.runs.filter(function (r) { return r.model === f.model && r.symmetry === f.symmetry && r.algorithm === f.algorithm; });
+    var scoped = INDEX.runs.filter(function (r) { return r.model === f.model && r.symmetry === f.symmetry && r.algorithm === f.algorithm; });
     fillSelect($("chi"), distinct(scoped, "chi"), true);
     fillSelect($("K"), distinct(scoped, "K"), true);
   }
-
   function findClosest(rows, mu0, lambda) {
     var best = null, bestDist = Infinity;
     rows.forEach(function (r) {
@@ -349,6 +476,7 @@
     return best;
   }
 
+  // --------------------------------------------------------------- render
   function renderResult() {
     var f = currentFilters();
     var scoped = rowsMatchingScope(f);
@@ -371,8 +499,6 @@
       noteEl.appendChild(span);
     }
 
-    $("ccVal").textContent = fmtNum(match.central_charge, 4);
-
     var chips = $("paramChips");
     chips.textContent = "";
     [
@@ -388,38 +514,71 @@
       chips.appendChild(chip);
     });
 
-    renderSectors(match.sectors || []);
-
+    $("phaseTitle").textContent = "Phase diagram — c vs μ₀²  ·  " + match.symmetry + ", " + match.algorithm +
+      ", χ=" + match.chi + ", K=" + match.K + ", λ=" + fmtNum(match.lambda, 3);
     var slice = scoped.filter(function (r) {
       return r.chi === match.chi && r.K === match.K && Math.abs(r.lambda - match.lambda) < 1e-9;
     }).sort(function (a, b) { return a.mu0_sq - b.mu0_sq; });
-    CURRENT_SLICE = slice;
-    $("chartTitle").textContent = "c vs μ₀²  ·  " + match.symmetry + ", " + match.algorithm +
-      ", χ=" + match.chi + ", K=" + match.K + ", λ=" + fmtNum(match.lambda, 3);
-    renderChart(slice, match);
+    renderPhaseChart(slice, match);
     renderSliceTable(slice, match);
 
     $("results").hidden = false;
+    $("detailLoading").hidden = false;
+    $("sectorTable").hidden = true;
+
+    fetchDetail(match.id).then(function (detail) {
+      CURRENT_DETAIL = detail;
+      $("detailLoading").hidden = true;
+      $("sectorTable").hidden = false;
+
+      var ccSeries = detail.iterations
+        .filter(function (it) { return it.central_charge !== null && it.central_charge !== undefined; })
+        .map(function (it) { return { iteration: it.iteration, c: it.central_charge }; });
+      PLATEAU_ITER = ccSeries.length ? ccSeries[plateauIterationIndex(ccSeries.map(function (d) { return d.c; }))].iteration : 0;
+
+      var maxIter = detail.iterations.length ? detail.iterations[detail.iterations.length - 1].iteration : 0;
+      var slider = $("iterSlider");
+      slider.min = 0; slider.max = maxIter; slider.step = 1;
+      setIteration(PLATEAU_ITER);
+
+      renderIterCharts(detail);
+    }).catch(function (err) {
+      $("detailLoading").hidden = false;
+      $("detailLoading").textContent = "failed to load run detail: " + err;
+    });
+  }
+
+  function setIteration(iter) {
+    CURRENT_ITER = iter;
+    $("iterSlider").value = iter;
+    $("iterVal").textContent = iter;
+    var btn = $("plateauBtn");
+    btn.classList.toggle("at-plateau", iter === PLATEAU_ITER);
+    btn.textContent = iter === PLATEAU_ITER ? "at plateau" : "jump to plateau (" + PLATEAU_ITER + ")";
+
+    if (!CURRENT_DETAIL) return;
+    var rec = CURRENT_DETAIL.iterations.filter(function (it) { return it.iteration === iter; })[0];
+    if (!rec) return;
+
+    $("ccVal").textContent = fmtNum(rec.central_charge, 4);
+    renderSectors(rec.sectors || []);
+    if (CURRENT_DETAIL) highlightIteration(iter);
   }
 
   function renderSectors(sectors) {
+    $("sectorCaption").textContent = "scaling dimensions by sector, iteration " + CURRENT_ITER + " (ordered by |charge|)";
     var body = $("sectorBody");
     body.textContent = "";
-    var sorted = sectors.slice().sort(function (a, b) {
-      var amin = a.dims.length ? Math.min.apply(null, a.dims) : Infinity;
-      var bmin = b.dims.length ? Math.min.apply(null, b.dims) : Infinity;
-      return amin - bmin;
-    });
+    var sorted = sectors.slice().sort(function (a, b) { return chargeMagnitude(a.charge) - chargeMagnitude(b.charge); });
     if (sorted.length === 0) {
       var tr = document.createElement("tr");
       var td = document.createElement("td");
-      td.colSpan = 3; td.className = "dims"; td.textContent = "no populated sectors at the final iteration";
+      td.colSpan = 3; td.className = "dims"; td.textContent = "no populated sectors at this iteration";
       tr.appendChild(td); body.appendChild(tr);
       return;
     }
     sorted.forEach(function (sec) {
       var tr = document.createElement("tr");
-
       var tdCharge = document.createElement("td");
       tdCharge.className = "charge"; tdCharge.textContent = chargeLabel(sec.charge);
       tr.appendChild(tdCharge);
@@ -452,6 +611,7 @@
     });
   }
 
+  // ---------------------------------------------------------------- SVG
   var NS = "http://www.w3.org/2000/svg";
   function svgEl(tag, attrs) {
     var el = document.createElementNS(NS, tag);
@@ -459,96 +619,146 @@
     return el;
   }
 
-  function renderChart(slice, match) {
-    var svg = $("chart");
+  // Generic multi-series line chart. `series`: [{color, points:[{x,y}], name}]
+  // `opts.markX`: draw a vertical highlight at this x value.
+  function drawLineChart(svg, tooltipEl, series, opts) {
     svg.textContent = "";
-    if (slice.length === 0) return;
-
-    var W = 460, H = 260, padL = 46, padR = 14, padT = 14, padB = 32;
+    var vb = svg.viewBox.baseVal;
+    var W = vb.width || 440, H = vb.height || 190;
+    var padL = 42, padR = 12, padT = 12, padB = 26;
     var innerW = W - padL - padR, innerH = H - padT - padB;
 
-    var xs = slice.map(function (r) { return r.mu0_sq; });
-    var ys = slice.map(function (r) { return r.central_charge; });
+    var allPts = [];
+    series.forEach(function (s) { allPts = allPts.concat(s.points); });
+    if (allPts.length === 0) return;
+
+    var xs = allPts.map(function (p) { return p.x; });
+    var ys = allPts.map(function (p) { return p.y; });
     var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
     var yMin = Math.min(0, Math.min.apply(null, ys)), yMax = Math.max.apply(null, ys);
     if (xMin === xMax) { xMin -= 1; xMax += 1; }
     if (yMin === yMax) { yMin -= 1; yMax += 1; }
-    var yPad = (yMax - yMin) * 0.1;
+    var yPad = (yMax - yMin) * 0.12;
     yMin -= yPad; yMax += yPad;
 
     function X(v) { return padL + (v - xMin) / (xMax - xMin) * innerW; }
     function Y(v) { return padT + innerH - (v - yMin) / (yMax - yMin) * innerH; }
 
-    // gridlines + y ticks (4 steps)
     var ticks = 4;
     for (var i = 0; i <= ticks; i++) {
       var yv = yMin + (yMax - yMin) * i / ticks;
       var yy = Y(yv);
       svg.appendChild(svgEl("line", { class: "grid-line", x1: padL, x2: W - padR, y1: yy, y2: yy }));
-      var t = svgEl("text", { x: padL - 8, y: yy + 3, "text-anchor": "end" });
+      var t = svgEl("text", { x: padL - 7, y: yy + 3, "text-anchor": "end" });
       t.textContent = yv.toFixed(2);
       svg.appendChild(t);
     }
-    // x axis + a handful of ticks
     svg.appendChild(svgEl("line", { class: "axis-line", x1: padL, x2: W - padR, y1: padT + innerH, y2: padT + innerH }));
-    var xTickVals = distinct(slice, "mu0_sq");
-    var xTickStep = Math.max(1, Math.ceil(xTickVals.length / 6));
+    var xTickVals = distinct(allPts, "x");
+    var xStep = Math.max(1, Math.ceil(xTickVals.length / 7));
     xTickVals.forEach(function (v, idx) {
-      if (idx % xTickStep !== 0 && idx !== xTickVals.length - 1) return;
-      var xx = X(v);
-      var t = svgEl("text", { x: xx, y: H - 8, "text-anchor": "middle" });
-      t.textContent = v.toFixed(2);
+      if (idx % xStep !== 0 && idx !== xTickVals.length - 1) return;
+      var t = svgEl("text", { x: X(v), y: H - 7, "text-anchor": "middle" });
+      t.textContent = (opts && opts.xFmt) ? opts.xFmt(v) : v;
       svg.appendChild(t);
     });
-
-    // line
-    var d = slice.map(function (r, idx) { return (idx === 0 ? "M" : "L") + X(r.mu0_sq) + " " + Y(r.central_charge); }).join(" ");
-    svg.appendChild(svgEl("path", { class: "series-line", d: d }));
 
     var crosshair = svgEl("line", { class: "crosshair", x1: 0, x2: 0, y1: padT, y2: padT + innerH });
     svg.appendChild(crosshair);
 
-    var tooltip = $("tooltip");
-    var chartWrap = svg.parentElement;
-
-    slice.forEach(function (r) {
-      var isMatch = r === match;
-      var cx = X(r.mu0_sq), cy = Y(r.central_charge);
-      var dot = svgEl("circle", { class: "pt" + (isMatch ? " selected" : ""), cx: cx, cy: cy, r: isMatch ? 5.5 : 4 });
-      svg.appendChild(dot);
-      var hit = svgEl("circle", { class: "pt-hit", cx: cx, cy: cy, r: 12 });
-      hit.addEventListener("pointerenter", function () { showTip(r, cx, cy, isMatch); });
-      hit.addEventListener("pointermove", function () { showTip(r, cx, cy, isMatch); });
-      hit.addEventListener("pointerleave", hideTip);
-      hit.addEventListener("focus", function () { showTip(r, cx, cy, isMatch); });
-      hit.addEventListener("blur", hideTip);
-      hit.setAttribute("tabindex", "0");
-      svg.appendChild(hit);
-    });
-
-    function showTip(r, cx, cy, isMatch) {
-      crosshair.setAttribute("x1", cx); crosshair.setAttribute("x2", cx);
-      crosshair.style.opacity = 1;
-      var box = svg.getBoundingClientRect();
-      var wrapBox = chartWrap.getBoundingClientRect();
-      var px = box.left - wrapBox.left + (cx / W) * box.width;
-      var py = box.top - wrapBox.top + (cy / H) * box.height;
-      tooltip.style.left = px + "px";
-      tooltip.style.top = py + "px";
-      tooltip.innerHTML = "";
-      var line1 = document.createElement("div");
-      line1.appendChild(document.createTextNode("μ₀²=" + fmtNum(r.mu0_sq, 3) + "  "));
-      var b = document.createElement("b"); b.textContent = "c=" + fmtNum(r.central_charge, 4);
-      line1.appendChild(b);
-      tooltip.appendChild(line1);
-      if (isMatch) {
-        var line2 = document.createElement("div");
-        line2.textContent = "matched point";
-        tooltip.appendChild(line2);
-      }
-      tooltip.style.opacity = 1;
+    if (opts && opts.markX !== undefined && opts.markX !== null) {
+      var mx = X(opts.markX);
+      svg.appendChild(svgEl("line", {
+        x1: mx, x2: mx, y1: padT, y2: padT + innerH,
+        stroke: "var(--series-2)", "stroke-width": 1.5, "stroke-dasharray": "3 3",
+      }));
     }
-    function hideTip() { tooltip.style.opacity = 0; crosshair.style.opacity = 0; }
+
+    var chartWrap = svg.parentElement;
+    series.forEach(function (s) {
+      var pts = s.points.slice().sort(function (a, b) { return a.x - b.x; });
+      var d = pts.map(function (p, idx) { return (idx === 0 ? "M" : "L") + X(p.x) + " " + Y(p.y); }).join(" ");
+      svg.appendChild(svgEl("path", { class: "series-line", d: d, stroke: s.color }));
+
+      pts.forEach(function (p) {
+        var isMark = opts && opts.markX !== undefined && p.x === opts.markX;
+        var cx = X(p.x), cy = Y(p.y);
+        var dot = svgEl("circle", { class: "pt" + (isMark ? " selected" : ""), cx: cx, cy: cy, r: isMark ? 5 : 3.5, fill: s.color });
+        svg.appendChild(dot);
+        var hit = svgEl("circle", { class: "pt-hit", cx: cx, cy: cy, r: 12, tabindex: "0" });
+        function show() {
+          crosshair.setAttribute("x1", cx); crosshair.setAttribute("x2", cx); crosshair.style.opacity = 1;
+          var box = svg.getBoundingClientRect(), wrapBox = chartWrap.getBoundingClientRect();
+          var px = box.left - wrapBox.left + (cx / W) * box.width;
+          var py = box.top - wrapBox.top + (cy / H) * box.height;
+          tooltipEl.style.left = px + "px"; tooltipEl.style.top = py + "px";
+          tooltipEl.innerHTML = "";
+          var line = document.createElement("div");
+          var xLabelText = (opts && opts.xLabel) ? opts.xLabel + "=" : "x=";
+          line.appendChild(document.createTextNode(xLabelText + p.x + "  "));
+          var b = document.createElement("b");
+          b.textContent = (s.name ? s.name + "=" : "") + fmtNum(p.y, 4);
+          line.appendChild(b);
+          tooltipEl.appendChild(line);
+          tooltipEl.style.opacity = 1;
+        }
+        hit.addEventListener("pointerenter", show);
+        hit.addEventListener("pointermove", show);
+        hit.addEventListener("focus", show);
+        hit.addEventListener("pointerleave", function () { tooltipEl.style.opacity = 0; crosshair.style.opacity = 0; });
+        hit.addEventListener("blur", function () { tooltipEl.style.opacity = 0; crosshair.style.opacity = 0; });
+        svg.appendChild(hit);
+      });
+    });
+  }
+
+  function renderPhaseChart(slice, match) {
+    var pts = slice.map(function (r) { return { x: r.mu0_sq, y: r.central_charge }; });
+    drawLineChart($("chartPhase"), $("tooltipPhase"),
+      [{ color: "var(--series-1)", points: pts, name: "c" }],
+      { markX: match.mu0_sq, xLabel: "μ₀²" });
+    // recolor the matched dot orange after the fact (single-series chart, mark by position)
+    var svg = $("chartPhase");
+    var dots = svg.querySelectorAll(".pt.selected");
+    dots.forEach(function (d) { d.setAttribute("fill", "var(--series-2)"); });
+  }
+
+  function renderIterCharts(detail) {
+    var ccPts = detail.iterations
+      .filter(function (it) { return it.central_charge !== null && it.central_charge !== undefined; })
+      .map(function (it) { return { x: it.iteration, y: it.central_charge }; });
+    drawLineChart($("chartIterC"), $("tooltipIterC"),
+      [{ color: "var(--series-1)", points: ccPts, name: "c" }],
+      { markX: CURRENT_ITER, xLabel: "iter" });
+
+    var colors = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
+    var names = ["Δ₁", "Δ₂", "Δ₃"];
+    var dimSeries = [0, 1, 2].map(function (rank) {
+      var pts = [];
+      detail.iterations.forEach(function (it) {
+        var dims = flatDims(it);
+        // skip index 0 (identity, Δ=0); rank counts from the first excited state
+        var idx = rank + 1;
+        if (dims.length > idx) pts.push({ x: it.iteration, y: dims[idx] });
+      });
+      return { color: colors[rank], name: names[rank], points: pts };
+    }).filter(function (s) { return s.points.length > 0; });
+    drawLineChart($("chartIterDims"), $("tooltipIterDims"), dimSeries, { markX: CURRENT_ITER, xLabel: "iter" });
+
+    var legend = $("dimsLegend");
+    legend.textContent = "";
+    dimSeries.forEach(function (s, i) {
+      var span = document.createElement("span");
+      var dotSpan = document.createElement("span");
+      dotSpan.className = "dot s" + (i + 1);
+      span.appendChild(dotSpan);
+      span.appendChild(document.createTextNode(s.name));
+      legend.appendChild(span);
+    });
+  }
+
+  function highlightIteration(iter) {
+    if (CURRENT_DETAIL) renderIterCharts(CURRENT_DETAIL);
   }
 
   function renderSliceTable(slice, match) {
@@ -569,8 +779,9 @@
     });
   }
 
+  // ----------------------------------------------------------------- init
   function init(data) {
-    DATA = data;
+    INDEX = data;
     fillSelect($("model"), distinct(data.runs, "model"), false);
     refreshSymmetry();
 
@@ -581,6 +792,8 @@
     [$("mu0"), $("lambda")].forEach(function (el) {
       el.addEventListener("keydown", function (e) { if (e.key === "Enter") renderResult(); });
     });
+    $("iterSlider").addEventListener("input", function () { setIteration(parseInt(this.value, 10)); });
+    $("plateauBtn").addEventListener("click", function () { setIteration(PLATEAU_ITER); });
     $("tableToggle").addEventListener("click", function () {
       var t = $("sliceTable");
       t.hidden = !t.hidden;
@@ -588,8 +801,18 @@
     });
 
     var n = data.runs.length;
-    $("stamp").textContent = n + " runs · generated " + data.generated_at;
-    $("footer").textContent = "Data exported from the TACO-BELL database (" + n + " runs). No server — everything above runs in your browser.";
+    var models = distinct(data.runs, "model").length;
+    var symmetries = distinct(data.runs, "symmetry").length;
+    var stats = $("headerStats");
+    [[n, "runs"], [models, "models"], [symmetries, "symmetries"]].forEach(function (pair) {
+      var d = document.createElement("div"); d.className = "stat";
+      var nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = pair[0];
+      var lEl = document.createElement("div"); lEl.className = "lbl"; lEl.textContent = pair[1];
+      d.appendChild(nEl); d.appendChild(lEl);
+      stats.appendChild(d);
+    });
+
+    $("footer").textContent = "Data exported from the TACO-BELL database (" + n + " runs, generated " + data.generated_at + "). No server — everything above runs in your browser.";
 
     renderResult();
   }
@@ -598,7 +821,7 @@
     .then(function (r) { return r.json(); })
     .then(init)
     .catch(function (err) {
-      $("stamp").textContent = "failed to load database: " + err;
+      $("headerStats").textContent = "failed to load database: " + err;
     });
 })();
 </script>

@@ -621,7 +621,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    ingest_jld2_old!(filepath, model; symmetry="", algorithm="", db_path, allow_duplicate)
+    ingest_jld2_old!(filepath, model; symmetry, algorithm, db_path, allow_duplicate)
     ingest_jld2_old!(filepath, params::RunParameters; db_path, allow_duplicate)
 
 Like [`ingest_jld2!`](@ref), but for JLD2 output from **before TNRKit
@@ -632,23 +632,31 @@ CFTData)` tuple, and the top-level bond-dimension key is named `ndimtrunc`
 instead of `chi` (`K` means the same thing in both). There is no recorded
 per-iteration normalization in these files, so
 `CFTResults.normalization` comes back `missing` for every iteration
-ingested this way. `symmetry`/`algorithm` are never stored in old files
-either — always supply them (old TACO-BELL-adjacent calculations of this
-vintage were U(1)-symmetric, going by the sector labels' `charge` field
-name, but confirm against your own script before assuming that).
+ingested this way.
+
+`symmetry`/`algorithm` are never stored in old files, so unlike
+[`ingest_jld2!`](@ref) there's nothing to fall back to — **both are
+required keywords here, with no default**, specifically so a call that
+forgets them fails loudly instead of silently inserting entries with a
+blank symmetry/algorithm (which happened twice before this was enforced —
+check the sector labels' charge field name to tell them apart: `charge` is
+`U1Irrep` → `"U(1)"`, `n` is `ZNIrrep` → `"Z2"`/`"Z3"`/…, `j` alone is
+`SU2Irrep`, `j`+`s` is `CU1Irrep` → `"O(2)"`).
 
 # Example
 ```julia
 using TACOBELL
 ingest_jld2_old!("Com_CFT_μ0-0.01_λ0.01_K10truncrank16_niter15.jld2", "phi4_complex";
                   symmetry="U(1)", algorithm="LoopTNR")
+ingest_jld2_old!("Re_CFT_TransLine_K10truncrank16_niter15_μ0-0.01_λ0.01.jld2", "phi4_real";
+                  symmetry="Z2", algorithm="LoopTNR")
 ```
 """
 function ingest_jld2_old!(
         filepath :: String,
         model    :: AbstractString;
-        symmetry :: AbstractString = "",
-        algorithm :: AbstractString = "",
+        symmetry :: AbstractString,
+        algorithm :: AbstractString,
         db_path  :: String  = DB_PATH(),
         allow_duplicate :: Bool = false,
     )

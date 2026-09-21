@@ -432,12 +432,19 @@ ingest_jld2_old!("Com_CFT_μ0-0.01_λ0.01_K10truncrank16_niter15.jld2", "phi4_co
 ```
 
 Unlike current-format files, old files never stored `symmetry`/`algorithm`
-at all, so you always need to supply both — there's nothing to fall back
-to. `normalization` comes back `missing` for every iteration ingested this
-way (see the `CFTResults` table above); everything else — χ, K, μ₀², λ,
-central charge, scaling dimensions, for whatever symmetry the sectors turn
-out to use — is read the same way as the current format, via the same
-generic, symmetry-agnostic sector parsing.
+at all, so **both are required keywords with no default** — `infer_params`
+must supply them (a `_ -> "phi4_complex"` closure, the shorthand that works
+fine for current-format files, will raise `UndefKeywordError` here rather
+than silently inserting blank-symmetry entries, which happened twice before
+this was enforced). To tell symmetries apart, check a sector's charge field
+name: `charge` → `U1Irrep`/`"U(1)"`, `n` → `ZNIrrep`/`"Z2"` (real φ⁴'s
+φ→-φ symmetry — different from complex φ⁴'s continuous `U(1)`/`O(2)`, so
+don't assume last time's answer still applies), `j` alone → `SU2Irrep`, `j`
++ `s` → `CU1Irrep`/`"O(2)"`. `normalization` comes back `missing` for every
+iteration ingested this way (see the `CFTResults` table above); everything
+else — χ, K, μ₀², λ, central charge, scaling dimensions — is read the same
+way as the current format, via the same generic, symmetry-agnostic sector
+parsing.
 
 ### Sharing results / contributing
 

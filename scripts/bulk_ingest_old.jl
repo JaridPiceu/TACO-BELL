@@ -18,9 +18,16 @@ isdir(data_dir) || error("Not a directory: $data_dir")
 
 # Old files never stored `symmetry`/`algorithm` at all, so — unlike the
 # current-format script — you need to set those for real here too, not
-# just `model`. Adjust per your actual setup for this batch of old data.
+# just `model`. `ingest_jld2_old!`/`ingest_directory_old!` require both
+# explicitly (no default) for exactly this reason: it's easy to otherwise
+# forget and silently insert blank-symmetry entries, which happened twice.
+#
+# Update this to match the batch you're ingesting — don't assume it's the
+# same as last time. Check a sector's charge field name if unsure:
+# "charge" -> U1Irrep -> "U(1)" | "n" -> ZNIrrep -> "Z2" | "j" -> SU2Irrep
+# | "j"+"s" -> CU1Irrep -> "O(2)".
 infer_params(filepath) = RunParameters(
-    model="phi4_complex", symmetry="U(1)", algorithm="LoopTNR",
+    model="phi4_real", symmetry="Z2", algorithm="LoopTNR",
     chi=0, K=0, mu0_sq=0.0, lambda=0.0,  # overwritten from each file
 )
 

@@ -1,0 +1,26 @@
+Creative Commons Attribution 4.0 International License (CC BY 4.0)
+
+The data in this directory (db/) — every run's parameters, central charge,
+and scaling dimensions — is licensed under the Creative Commons Attribution
+4.0 International License. This is separate from the MIT license covering
+the rest of the repository (the TACOBELL code) — see the top-level LICENSE
+file.
+
+You are free to:
+  - Share — copy and redistribute the data in any medium or format
+  - Adapt — remix, transform, and build upon the data for any purpose,
+    even commercially
+
+Under the following terms:
+  - Attribution — You must give appropriate credit to Jarid Piceu, provide
+    a link to this repository, and indicate if changes were made.
+
+No additional restrictions — you may not apply legal terms or technological
+measures that legally restrict others from doing anything the license permits.
+
+Full legal text: https://creativecommons.org/licenses/by/4.0/legalcode
+Human-readable summary: https://creativecommons.org/licenses/by/4.0/
+
+To attribute this dataset, cite:
+  Jarid Piceu, TACO-BELL: Tensor Archive of Conformal Output (2026).
+  https://github.com/JaridPiceu/TACO-BELL

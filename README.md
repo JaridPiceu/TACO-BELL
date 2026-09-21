@@ -1,5 +1,7 @@
 # TACO-BELL
 
+[![Test](https://github.com/JaridPiceu/TACO-BELL/actions/workflows/test.yml/badge.svg)](https://github.com/JaridPiceu/TACO-BELL/actions/workflows/test.yml)
+
 Tensor Archive of Conformal Output — Best Ever Lattice Labour
 
 A database for CFT data (central charges, scaling dimensions, ...) computed
@@ -495,6 +497,16 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 
 The test suite runs entirely against temporary databases, so it never
 touches the real `db/` directory.
+
+[`.github/workflows/test.yml`](.github/workflows/test.yml) runs this same
+command automatically on every push to `main` and every pull request
+(against both the oldest Julia version this package claims to support and
+the latest stable one), so a broken change shows up as a red ✗ before it
+reaches `main` rather than being discovered later. That alone doesn't stop
+anyone from merging a red PR, though — to actually *require* it, add it as
+a required check in GitHub's branch protection settings: Settings →
+Branches → edit the `main` rule → "Require status checks to pass before
+merging" → select `test`.
 
 ## License
 

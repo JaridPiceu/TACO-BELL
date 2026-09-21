@@ -70,11 +70,19 @@
     flex-direction: column;
     gap: 10px;
   }
-  header.hero .eyebrow {
-    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  header.hero .brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header.hero h1 {
+    font-size: 34px; margin: 0; letter-spacing: -0.02em; font-weight: 800;
     color: var(--series-1);
   }
-  header.hero h1 { font-size: 26px; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  header.hero .tag {
+    font-family: var(--mono); font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-2); background: var(--page);
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px;
+  }
+  header.hero .full-name {
+    margin: 0; font-size: 14.5px; font-weight: 600; color: var(--text-2); text-wrap: balance;
+  }
   header.hero p.lede { margin: 0; color: var(--text-2); font-size: 14px; max-width: 72ch; line-height: 1.55; }
   header.hero .stats {
     display: flex; flex-wrap: wrap; gap: 18px 28px; margin-top: 6px;
@@ -223,8 +231,11 @@
 
 <div class="wrap">
   <header class="hero">
-    <span class="eyebrow">TACO-BELL · Tensor Archive of Conformal Output</span>
-    <h1>Explorer</h1>
+    <div class="brand">
+      <h1>TACO-BELL</h1>
+      <span class="tag">Explorer</span>
+    </div>
+    <p class="full-name">Tensor Archive of Conformal Output — Best Ever Lattice Labour</p>
     <p class="lede">
       Each run here comes from a Tensor Network Renormalization (TNR) calculation on the
       2D φ⁴ lattice model. Starting from a bare mass μ₀² and coupling λ, TNR coarse-grains

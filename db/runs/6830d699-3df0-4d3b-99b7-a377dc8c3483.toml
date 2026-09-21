@@ -246,9 +246,9 @@ notes = ""
 
 [params]
 chi = 32
-symmetry = ""
+symmetry = "Z2"
 model = "phi4_real"
-algorithm = ""
+algorithm = "LoopTNR"
 lambda = 0.2
 mu0_sq = -0.27
 K = 20

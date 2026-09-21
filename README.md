@@ -115,15 +115,12 @@ tunable knobs (`nwin`, `skipfrac`, `avoid_zero`).
 To see the whole RG flow at a glance rather than just the endpoint:
 
 ```julia
-using TACOBELL, Plots   # requires Plots.jl — see note below
+using TACOBELL
 plot_central_charge(runs[1])
 ```
 
-`plot_central_charge` is provided by a package extension and only exists
-once `Plots` is loaded — TACOBELL itself doesn't depend on it, since Plots
-is a heavy stack and this is purely a convenience. The first time you use
-it, `Pkg.add("Plots")` if you don't already have it; that adds Plots as an
-ordinary dependency of your environment, same as any `Pkg.add`.
+(The [Explorer webpage](#the-explorer-webpage) below plots this too, plus
+the lowest scaling dimensions vs iteration, without needing Julia at all.)
 
 ### 3. Get it out again
 
@@ -252,7 +249,7 @@ placeholder that gets overwritten — see [`ingest_jld2!`](src/TACOBELL.jl).
 | Field | Type | Description |
 |-------|------|-------------|
 | `iteration` | Int | RG step index (0 = initial tensor) |
-| `normalization` | Float64 | Per-site tensor norm at this step |
+| `normalization` | Float64? | Per-site tensor norm at this step (`missing` for pre-TNRKit-v0.5 files — see [Old-format ingestion](#old-format-ingestion-pre-tnrkit-v05)) |
 | `central_charge` | Float64? | Extracted central charge *c* |
 | `sectors` | `Vector{ScalingDimSector}` | Scaling dims grouped by symmetry sector |
 | `notes` | String | Free-text annotation |
@@ -303,30 +300,142 @@ db/
 Never edit `index.toml` or `CATALOG.md` by hand — both are generated from
 the `runs/*.toml` files (`rebuild_index!()` / `generate_catalog()`).
 
+### Repo size: what is and isn't committed
+
+At a few thousand runs, `db/runs/` is genuinely large (each run's full
+per-iteration, per-sector detail adds up) — that's the actual database, so
+it's tracked in git on purpose, same as any research-data repo of this
+shape. `web/data/runs/` would be exactly the same amount of data a second
+time, in JSON instead of TOML — 100% derived, regenerated in seconds by
+`export_json_runs`, and not committed (`.gitignore` excludes it). Only
+`web/data/tacobell.json`, the lightweight index (a few hundred bytes per
+run — no per-iteration detail), is tracked, the same way `db/index.toml`
+and `db/CATALOG.md` are: small, auto-regenerated summaries, safe to keep in
+git even as the underlying data grows.
+
+Practically, this means:
+- `git clone` gets you the real database (`db/`) and a working Explorer
+  *index* (enough to search and see summary results), but not the
+  Explorer's per-iteration detail/charts until you run
+  `julia --project=. scripts/update_web.jl` locally.
+- Deploying the Explorer (see below) means uploading the regenerated
+  `web/` folder directly, not just pushing to git.
+
+If `db/runs/` itself eventually gets too large for comfortable git use
+(GitHub starts recommending Git LFS somewhere in the multi-GB range), that
+would be a deliberate call to make later — nothing here forces it, and nothing
+about the current setup blocks switching to LFS for `db/runs/*.toml`
+specifically if it comes to that.
+
 ### The Explorer webpage
 
 [`web/index.html`](web/index.html) is a single static page (no server, no
 build step) that lets you pick a model/symmetry/algorithm, type in μ₀²/λ,
-and see the matched run's central charge and scaling-dimension sectors,
-plus a small phase-diagram chart of *c* vs μ₀² for that setup. It reads
-[`web/data/tacobell.json`](web/data/tacobell.json), a snapshot written by
-`export_json`:
+and see the matched run's central charge and scaling-dimension sectors —
+plus an iteration slider (defaulting to the plateau, like
+`plateau_central_charge`), a *c* vs iteration chart, a lowest-Δ-vs-iteration
+chart, and a phase-diagram chart of *c* vs μ₀² across that setup.
 
-```julia
-export_json(; out="web/data/tacobell.json")
+It reads two things: a lightweight index (params + plateau *c* for every
+run) and, per run, a detail file with the full iteration-by-iteration
+trajectory. The index loads up front; a run's detail file is only fetched
+once you've actually matched that run, so the page stays fast even with
+thousands of runs in the database.
+
+Regenerate both after adding new runs, before sharing the page:
+
+```
+julia --project=. scripts/update_web.jl
 ```
 
-Regenerate that snapshot (and commit it) the same way you'd regenerate
-`CATALOG.md` — after adding new runs, before sharing the page. To view it
-locally, **serve** the `web/` folder rather than double-clicking
+then commit the changed files under `web/data/`.
+
+To view it locally, **serve** the `web/` folder rather than double-clicking
 `index.html` — browsers block a page's own `fetch()` of a local file opened
 via `file://`. In VS Code, the simplest way is the "Live Server" extension:
 right-click `web/index.html` → *Open with Live Server*. Without VS Code, any
 static file server works, e.g. `python -m http.server 8000` from inside
-`web/`, then open `http://localhost:8000`. To put this online for real, enable
-GitHub Pages for this repo pointed at the `web/` folder — note that on
-GitHub's free plan, Pages only serves **public** repos, so this waits for
-the same "make it public" step as the rest of the database.
+`web/`, then open `http://localhost:8000`.
+
+### Putting the Explorer online
+
+#### Option A: GitHub Pages (repo must be public)
+
+[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml)
+does the whole thing automatically: on every push that touches `db/**` (or
+`web/index.html`, or on a manual trigger), it installs Julia, runs
+`scripts/update_web.jl` to regenerate `web/data/` fresh, and deploys `web/`
+to GitHub Pages — so `web/data/runs/` never needs to be committed (see
+[Repo size](#repo-size-what-is-and-isnt-committed) above) and the live site
+is always in sync with `db/`. Runs on GitHub's free tier — Actions minutes
+are unlimited for public repos.
+
+Two one-time steps in GitHub's web UI, which only you can do:
+
+1. **Settings → General → Danger Zone → Change visibility → Make public.**
+   This is the real, hard-to-fully-reverse step — once public, anything
+   already pushed can be cloned/cached elsewhere even if you flip it back
+   later. Everything in this repo (the whole CFT database) becomes public
+   at this point, not just the Explorer.
+2. **Settings → Pages → Build and deployment → Source: "GitHub Actions"**
+   (not "Deploy from a branch").
+
+After that, push to `main` (or run the workflow manually from the *Actions*
+tab) and the site appears at `https://<your-username>.github.io/TACO-BELL/`
+within a few minutes — check the *Actions* tab for progress/errors.
+
+#### Option B: Netlify (repo stays private)
+
+If you'd rather not make the repo public, a static-site host like
+**Netlify** (or Vercel, Cloudflare Pages) gives a public URL from private
+content — repo access and site access are unrelated there. It can't watch
+your git repo for `db/` changes the way the Pages workflow does (nothing to
+connect to, since the data isn't committed), so it's a manual step instead
+of automatic:
+
+```
+julia --project=. scripts/update_web.jl
+```
+
+then either drag the `web/` folder onto
+[app.netlify.com/drop](https://app.netlify.com/drop) (no account needed for
+a one-off; sign up to keep the same URL across updates), or, for a
+repeatable command, install the Netlify CLI once and run
+`netlify deploy --dir=web --prod` (it reads [`netlify.toml`](netlify.toml)
+for the same directory if you omit `--dir`). Re-run both commands whenever
+you want the live site to reflect new data.
+
+Either option makes the **data** public to anyone with the URL. For Option
+A that's true by construction (the whole repo is public); for Option B
+it's worth being explicit about even though the repo itself stays private —
+the data is out regardless of which one you pick.
+
+### Old-format ingestion (pre-TNRKit v0.5)
+
+Files from before TNRKit v0.5 stored CFT data differently: each iteration
+is a plain `Dict` (keyed `"c"` for the central charge, and everything else
+by its charge/irrep label) instead of the `(normalization, CFTData)` tuple
+newer files use, and the top-level bond-dimension key is `ndimtrunc`
+instead of `chi` (`K` means the same thing either way). There's no
+per-iteration normalization recorded at all in these files. [`ingest_jld2_old!`](src/TACOBELL.jl)
+and [`ingest_directory_old!`](src/TACOBELL.jl) handle this format —
+same API shape as their current-format counterparts, so
+[`scripts/bulk_ingest_old.jl`](scripts/bulk_ingest_old.jl) looks almost
+identical to `scripts/bulk_ingest.jl`:
+
+```julia
+using TACOBELL
+ingest_jld2_old!("Com_CFT_μ0-0.01_λ0.01_K10truncrank16_niter15.jld2", "phi4_complex";
+                  symmetry="U(1)", algorithm="LoopTNR")
+```
+
+Unlike current-format files, old files never stored `symmetry`/`algorithm`
+at all, so you always need to supply both — there's nothing to fall back
+to. `normalization` comes back `missing` for every iteration ingested this
+way (see the `CFTResults` table above); everything else — χ, K, μ₀², λ,
+central charge, scaling dimensions, for whatever symmetry the sectors turn
+out to use — is read the same way as the current format, via the same
+generic, symmetry-agnostic sector parsing.
 
 ### Sharing results / contributing
 
@@ -357,6 +466,13 @@ generate_catalog()
 Individual `db/runs/*.toml` files never need manual edits or conflict
 resolution — they're independent by construction.
 
+If you also keep the [Explorer webpage](#the-explorer-webpage) up to date,
+regenerate and commit its exports too, alongside `generate_catalog()`:
+
+```
+julia --project=. scripts/update_web.jl
+```
+
 ### JLD2 key layout
 
 `ingest_jld2!` reads TNRKit's `.jld2` output directly with `HDF5.jl` (JLD2
@@ -383,5 +499,5 @@ touches the real `db/` directory.
 ## Roadmap
 
 - [ ] TNRKit callback hook: `insert_run!` triggered automatically at convergence
-- [ ] GitHub Pages deployment for the Explorer webpage, once the repo goes public
+- [ ] Actually deploy the Explorer webpage (Netlify/Vercel/Cloudflare Pages — see [Putting the Explorer online](#putting-the-explorer-online--public-site-private-repo))
 - [ ] `diff_runs(id1, id2)` to compare two parameter sets side by side

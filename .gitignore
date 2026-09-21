@@ -10,6 +10,13 @@ Manifest.toml
 *.jld2
 *.h5
 
+# Per-run detail JSON for the Explorer webpage: 100% derived from db/runs/
+# via `export_json_runs` (see scripts/update_web.jl), regenerated in seconds,
+# and large at scale (hundreds of MB across thousands of runs) — committing
+# it would just duplicate db/ in another format. web/data/tacobell.json (the
+# lightweight index) stays tracked; only the heavy per-run detail is excluded.
+web/data/runs/
+
 # Editor / OS
 .vscode/
 .DS_Store

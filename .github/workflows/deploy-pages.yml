@@ -1,0 +1,62 @@
+name: Deploy Explorer to GitHub Pages
+
+# web/data/runs/ (the Explorer's per-run detail) is deliberately not
+# committed — see .gitignore and the README's "Repo size" section. This
+# workflow regenerates it from db/ on every relevant push and deploys the
+# result, so GitHub Pages always serves fresh data without that ~350MB+
+# ever needing to live in git.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "db/**"
+      - "web/index.html"
+      - "src/**"
+      - "Project.toml"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch: # lets you trigger a rebuild manually from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy at a time; a new push cancels a still-running older one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11"
+
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate TACOBELL
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Regenerate web/data from db/
+        run: julia --project=. scripts/update_web.jl
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

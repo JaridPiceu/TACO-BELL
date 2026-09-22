@@ -271,6 +271,7 @@
   footer a { color: var(--series-1); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
   footer .credit { color: var(--text-2); }
+  footer .pun { font-style: italic; opacity: 0.75; }
 
   [hidden] { display: none !important; }
 
@@ -429,6 +430,7 @@
       · vibe-coded with Claude 🤖
     </div>
     <div id="footer"></div>
+    <div class="pun" id="footerPun"></div>
   </footer>
 </div>
 
@@ -927,6 +929,45 @@
     });
   }
 
+  // tab title teases you into coming back when you wander off
+  function initTabTease() {
+    var original = document.title;
+    var awayTitles = ["🔔 Order's getting cold…", "🌮 Still there?", "🔔 Ding! Data's ready.", "🌮 Don't leave it soggy…"];
+    document.addEventListener("visibilitychange", function () {
+      document.title = document.hidden
+        ? awayTitles[Math.floor(Math.random() * awayTitles.length)]
+        : original;
+    });
+  }
+
+  // a little something for anyone who opens devtools
+  function initConsoleEasterEgg() {
+    var art = [
+      "        .--.",
+      "       ( 🔔 )   TACO-BELL",
+      "      .-'--'-.  Tensor Archive of Conformal Output",
+      "     / .::::. \\ Best Ever Lattice Labour",
+      "     \\ '::::' /",
+      "      '-.,,.-'",
+      "",
+      "Poking around in here? Respect. The raw data is one fetch away:",
+      "  data/tacobell.json  (index)   +   data/runs/<id>.json  (per-run trajectory)",
+      "No API key, no rate limit, no backend to break. Have fun. 🌮",
+    ].join("\n");
+    try { console.log("%c" + art, "font-family:monospace; color:#eb6834; white-space:pre;"); } catch (e) { /* ignore */ }
+  }
+
+  var FOOTER_PUNS = [
+    "Coarse-grained to a crisp.",
+    "χ marks the spot.",
+    "No backend — just well-seasoned data.",
+    "Served fresh off the RG flow.",
+    "This dataset has excellent taco-nomy.",
+    "Zero soggy shells, zero flaky measurements.",
+    "Renormalized, not fried (well — a little fried).",
+    "Every run fixed-point checked for crunch.",
+  ];
+
   // ----------------------------------------------------------------- init
   function init(data) {
     INDEX = data;
@@ -961,11 +1002,14 @@
     });
 
     $("footer").textContent = "Data exported from the TACO-BELL database (" + n + " runs, generated " + data.generated_at + "). No server — everything above runs in your browser.";
+    $("footerPun").textContent = FOOTER_PUNS[Math.floor(Math.random() * FOOTER_PUNS.length)];
 
     renderResult();
   }
 
   initTacoEasterEgg();
+  initTabTease();
+  initConsoleEasterEgg();
 
   // ---- fun gimmick: a taco-rain burst + a "like" that's just for you ----
   // No backend on a static page, so this is honestly a per-browser toggle

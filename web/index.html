@@ -188,6 +188,9 @@
   .hero-c { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
   .hero-c .val { font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; }
   .hero-c .label { color: var(--muted); font-size: 12.5px; }
+  #ccQualifier { font-family: var(--mono); }
+  #ccQualifier.plateau { color: var(--series-3); }
+  #ccQualifier.off-plateau { color: var(--series-2); }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px; }
   .chip {
@@ -209,6 +212,7 @@
   .iter-row .plateau-btn {
     font: inherit; font-size: 11px; font-family: var(--mono); color: var(--series-1); background: none;
     border: 1px solid var(--series-1); border-radius: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+    width: 21ch; text-align: center; flex: none;
   }
   .iter-row .plateau-btn:hover { background: var(--series-1); color: #fff; }
   .iter-row .plateau-btn.at-plateau { background: var(--series-1); color: #fff; }
@@ -360,7 +364,7 @@
         <div class="match-note" id="matchNote"></div>
         <div class="hero-c">
           <span class="val" id="ccVal">—</span>
-          <span class="label">central charge <span style="font-family:var(--mono)">c</span></span>
+          <span class="label">central charge <span style="font-family:var(--mono)">c</span> <span id="ccQualifier"></span></span>
         </div>
         <div class="chips" id="paramChips"></div>
 
@@ -697,8 +701,12 @@
     // the phase diagram and slice table (from the index), not this single
     // iteration's raw stored value — they mirror the same windowed-flatness
     // search but the index reports the window's mean, not one sample from it.
-    var ccToShow = (iter === PLATEAU_ITER && CURRENT) ? CURRENT.central_charge : rec.central_charge;
+    var atPlateau = iter === PLATEAU_ITER && CURRENT;
+    var ccToShow = atPlateau ? CURRENT.central_charge : rec.central_charge;
     $("ccVal").textContent = fmtNum(ccToShow, 4);
+    var qualifier = $("ccQualifier");
+    qualifier.textContent = atPlateau ? "(plateau)" : "(iteration " + iter + ", off plateau)";
+    qualifier.className = atPlateau ? "plateau" : "off-plateau";
     renderSectors(rec.sectors || []);
     if (CURRENT_DETAIL) highlightIteration(iter);
   }

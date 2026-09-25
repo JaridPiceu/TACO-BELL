@@ -693,7 +693,12 @@
     var rec = CURRENT_DETAIL.iterations.filter(function (it) { return it.iteration === iter; })[0];
     if (!rec) return;
 
-    $("ccVal").textContent = fmtNum(rec.central_charge, 4);
+    // At the plateau iteration, show the same plateau-window-mean value used by
+    // the phase diagram and slice table (from the index), not this single
+    // iteration's raw stored value — they mirror the same windowed-flatness
+    // search but the index reports the window's mean, not one sample from it.
+    var ccToShow = (iter === PLATEAU_ITER && CURRENT) ? CURRENT.central_charge : rec.central_charge;
+    $("ccVal").textContent = fmtNum(ccToShow, 4);
     renderSectors(rec.sectors || []);
     if (CURRENT_DETAIL) highlightIteration(iter);
   }

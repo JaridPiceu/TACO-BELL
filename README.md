@@ -21,7 +21,7 @@ hardcoded to one symmetry. Designed for use with
 
 ```julia
 using Pkg
-Pkg.develop(path="path/to/TACO-BELL")   # or Pkg.add(url="https://github.com/<you>/TACO-BELL")
+Pkg.develop(path="path/to/TACO-BELL")   # or Pkg.add(url="https://github.com/JaridPiceu/TACO-BELL.git")
 using TACOBELL
 ```
 

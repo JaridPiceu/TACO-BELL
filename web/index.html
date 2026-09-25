@@ -182,19 +182,21 @@
     font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 999px;
     border: 1px solid var(--border); color: var(--muted);
   }
-  .match-note .pill.exact { color: var(--series-1); border-color: var(--series-1); }
+  .match-note .pill.exact { color: var(--series-3); border-color: var(--series-3); font-weight: 700; }
+  .match-note .pill.approx { color: var(--series-2); border-color: var(--series-2); font-weight: 700; }
 
   .hero-c { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
   .hero-c .val { font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; }
   .hero-c .label { color: var(--muted); font-size: 12.5px; }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 10px 0 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px; }
   .chip {
-    font-family: var(--mono); font-size: 12px; color: var(--text-2);
-    background: var(--page); border: 1px solid var(--border);
-    border-radius: 7px; padding: 3px 8px; cursor: help;
+    display: flex; flex-direction: column; gap: 1px; line-height: 1.3;
+    font-family: var(--mono); background: var(--page); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 10px; cursor: help;
   }
-  .chip b { color: var(--text); font-weight: 600; }
+  .chip .chip-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .chip .chip-val { font-size: 13px; font-weight: 600; color: var(--text); }
 
   /* ---- iteration slider ---- */
   .iter-row {
@@ -342,7 +344,7 @@
     </div>
     <div class="field">
       <label for="mu0" title="Bare mass squared — the coefficient of the quadratic (φ²) term in the lattice action. Tunes how close the model sits to its critical point.">μ₀²</label>
-      <input id="mu0" type="number" step="0.1" value="-1.5">
+      <input id="mu0" type="number" step="0.01" value="-1.5">
     </div>
     <div class="field">
       <label for="lambda" title="Quartic coupling — the coefficient of the (φ²)² self-interaction term in the lattice action.">λ</label>
@@ -407,7 +409,7 @@
     </div>
 
     <div class="panel">
-      <h2 class="panel-title" id="phaseTitle">Phase diagram — c vs μ₀²</h2>
+      <h2 class="panel-title" id="phaseTitle">Phase diagram — c (plateau) vs μ₀²</h2>
       <div class="chart-head">
         <span></span>
         <span class="legend">
@@ -534,6 +536,27 @@
       chi: $("chi").value, K: $("K").value,
     };
   }
+  // When chi/K is left on "any", prefer the highest bond dimension available
+  // (and, within that, the highest initial truncation) rather than whichever
+  // happens to be closest in (mu0, lambda) across a mixed pool.
+  function resolvedFilters() {
+    var base = { model: $("model").value, symmetry: $("symmetry").value, algorithm: $("algorithm").value };
+    var baseRows = INDEX.runs.filter(function (r) {
+      return r.model === base.model && r.symmetry === base.symmetry && r.algorithm === base.algorithm;
+    });
+    var chi = $("chi").value;
+    if (chi === "") {
+      var chis = distinct(baseRows, "chi");
+      if (chis.length) chi = String(Math.max.apply(null, chis));
+    }
+    var afterChi = chi === "" ? baseRows : baseRows.filter(function (r) { return String(r.chi) === chi; });
+    var K = $("K").value;
+    if (K === "") {
+      var Ks = distinct(afterChi, "K");
+      if (Ks.length) K = String(Math.max.apply(null, Ks));
+    }
+    return { model: base.model, symmetry: base.symmetry, algorithm: base.algorithm, chi: chi, K: K };
+  }
   function rowsMatchingScope(f) {
     return INDEX.runs.filter(function (r) {
       return r.model === f.model && r.symmetry === f.symmetry && r.algorithm === f.algorithm &&
@@ -567,7 +590,11 @@
 
   // --------------------------------------------------------------- render
   function renderResult() {
-    var f = currentFilters();
+    var f = resolvedFilters();
+    // reflect any auto-picked chi/K (from "any") back into the selects, so
+    // it's visible which bond dimension / initial truncation was actually used
+    if ($("chi").value === "" && f.chi !== "") $("chi").value = f.chi;
+    if ($("K").value === "" && f.K !== "") $("K").value = f.K;
     var scoped = rowsMatchingScope(f);
     if (scoped.length === 0) { $("results").hidden = true; return; }
 
@@ -579,12 +606,14 @@
     var noteEl = $("matchNote");
     noteEl.textContent = "";
     var pill = document.createElement("span");
-    pill.className = "pill" + (exact ? " exact" : "");
-    pill.textContent = exact ? "exact match" : "closest available point";
+    pill.className = "pill" + (exact ? " exact" : " approx");
+    pill.textContent = exact ? "✓ exact match" : "≈ closest available point";
     noteEl.appendChild(pill);
     if (!exact) {
+      var dMu = Math.abs(match.mu0_sq - mu0), dLam = Math.abs(match.lambda - lambda);
       var span = document.createElement("span");
-      span.textContent = "requested μ₀²=" + fmtNum(mu0, 3) + ", λ=" + fmtNum(lambda, 3);
+      span.textContent = "requested μ₀²=" + fmtNum(mu0, 3) + ", λ=" + fmtNum(lambda, 3) +
+        " — off by Δμ₀²=" + fmtNum(dMu, 3) + ", Δλ=" + fmtNum(dLam, 3);
       noteEl.appendChild(span);
     }
 
@@ -597,9 +626,9 @@
         "The manifest symmetry enforced on the tensor's legs: Z2 for real φ⁴, U(1)/O(2) for complex φ⁴."],
       ["algorithm", match.algorithm,
         "Which TNR coarse-graining scheme produced this fixed point."],
-      ["χ", match.chi,
+      ["χ (bond dim)", match.chi,
         "Bond dimension — the maximum number of states kept when truncating the tensor network at each RG step. Higher χ = more accurate, more expensive."],
-      ["K", match.K,
+      ["K (init. trunc.)", match.K,
         "Initial truncation rank used before the first RG step."],
       ["μ₀² (bare mass²)", fmtNum(match.mu0_sq, 3),
         "The bare mass squared — the coefficient of the quadratic (φ²) term in the lattice action. Tunes how close the model sits to its critical point."],
@@ -611,13 +640,14 @@
       var chip = document.createElement("span");
       chip.className = "chip";
       chip.title = t[2];
-      var b = document.createElement("b"); b.textContent = t[1];
-      chip.appendChild(document.createTextNode(t[0] + " "));
-      chip.appendChild(b);
+      var lbl = document.createElement("span"); lbl.className = "chip-label"; lbl.textContent = t[0];
+      var val = document.createElement("span"); val.className = "chip-val"; val.textContent = t[1];
+      chip.appendChild(lbl);
+      chip.appendChild(val);
       chips.appendChild(chip);
     });
 
-    $("phaseTitle").textContent = "Phase diagram — c vs μ₀²  ·  " + match.symmetry + ", " + match.algorithm +
+    $("phaseTitle").textContent = "Phase diagram — c (plateau) vs μ₀²  ·  " + match.symmetry + ", " + match.algorithm +
       ", χ=" + match.chi + ", K=" + match.K + ", λ=" + fmtNum(match.lambda, 3);
     var slice = scoped.filter(function (r) {
       return r.chi === match.chi && r.K === match.K && Math.abs(r.lambda - match.lambda) < 1e-9;
@@ -868,8 +898,14 @@
     var table = $("sliceTable");
     table.textContent = "";
     var thead = document.createElement("tr");
-    ["μ₀²", "λ", "central charge c", "iterations"].forEach(function (h) {
-      var th = document.createElement("th"); th.textContent = h; thead.appendChild(th);
+    [
+      ["μ₀²", null], ["λ", null],
+      ["c (plateau)", "The plateau-averaged central charge — the same windowed-flatness estimate used to pick the default iteration, not just the last stored one."],
+      ["iterations", null],
+    ].forEach(function (h) {
+      var th = document.createElement("th"); th.textContent = h[0];
+      if (h[1]) { th.title = h[1]; th.style.cursor = "help"; th.style.textDecoration = "underline dotted"; th.style.textUnderlineOffset = "2px"; }
+      thead.appendChild(th);
     });
     table.appendChild(thead);
     slice.forEach(function (r) {

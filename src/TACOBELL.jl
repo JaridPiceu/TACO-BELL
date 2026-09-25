@@ -887,7 +887,8 @@ function central_charge_trajectory(entry::DatabaseEntry)
 end
 
 """
-    plateau_estimate(values; nwin=5, skipfrac=0.3, avoid_zero=false, zero_tol=1e-6)
+    plateau_estimate(values; nwin=5, skipfrac=0.3, avoid_zero=false, zero_tol=1e-6,
+                      recency_tol=1.5)
         -> (value, err, range, suspect)
 
 Estimate a converged value from a noisy RG trajectory by scanning windows of
@@ -897,6 +898,17 @@ are often stable for a stretch and then drift or blow up in the last few
 steps as finite-χ truncation error compounds. The first `skipfrac` fraction
 of `values` is excluded from the search, since it's usually a lattice-scale
 transient rather than the converged plateau.
+
+Near a critical point, a trajectory can also "walk" close to a non-trivial
+fixed point for several steps before eventually flowing to its true IR
+fixed point (often the trivial `c = 0` one) — and that earlier walk can
+occasionally be *marginally* flatter than the genuine, later plateau it
+flows to. To avoid locking onto that earlier false plateau, ties are broken
+by recency: among windows whose standard deviation is within a factor
+`recency_tol` of the global minimum, the *latest* one is used, not just
+whichever happens to be flattest. A trajectory that genuinely blows up late
+(the case this function was originally written to guard against) has a
+window standard deviation well above that tolerance, so it's unaffected.
 
 Set `avoid_zero=true` to also exclude windows containing a value with
 `abs(x) < zero_tol` when a clean window exists elsewhere — useful for
@@ -913,17 +925,25 @@ function plateau_estimate(
         values::AbstractVector{<:Real};
         nwin::Int = 5, skipfrac::Float64 = 0.3,
         avoid_zero::Bool = false, zero_tol::Float64 = 1.0e-6,
+        recency_tol::Float64 = 1.5,
     )
     n = length(values)
     n == 0 && error("plateau_estimate: empty trajectory")
     w = min(nwin, n)
     windows = [values[i:(i + w - 1)] for i in 1:(n - w + 1)]
-    stds = Statistics.std.(windows)
+    # Population (uncorrected) std: every window has the same width, so this
+    # is just a uniform rescaling of the corrected estimator and doesn't
+    # change any window's ranking -- but it stays finite for single-point
+    # windows (w == 1), where the corrected estimator is NaN (division by
+    # n - 1 == 0), which would otherwise poison every comparison below.
+    stds = Statistics.std.(windows; corrected = false)
     start_min = max(1, ceil(Int, skipfrac * n))
     isbad(win) = avoid_zero && any(x -> abs(x) < zero_tol, win)
     clean = findall(i -> !isbad(windows[i]) && i >= start_min, eachindex(windows))
     candidates = isempty(clean) ? eachindex(windows) : clean
-    i_best = candidates[argmin(stds[candidates])]
+    best_std = minimum(stds[candidates])
+    near_best = filter(i -> stds[i] <= recency_tol * best_std, candidates)
+    i_best = maximum(near_best)
     return (
         value   = Statistics.mean(windows[i_best]),
         err     = stds[i_best],

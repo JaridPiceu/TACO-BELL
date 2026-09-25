@@ -2,7 +2,7 @@
 
 # TACO-BELL catalog
 
-14453 run(s), last generated 2026-09-25T13:45:30.533.
+14453 run(s), last generated 2026-09-25T16:49:58.143.
 
 | ID | model | symmetry | algorithm | χ | K | μ₀² | λ | iterations | c |
 |---|---|---|---|---|---|---|---|---|---|

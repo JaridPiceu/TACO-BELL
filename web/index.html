@@ -505,12 +505,17 @@
     return all;
   }
   // windowed-plateau search, mirroring TACOBELL.plateau_estimate's defaults
+  // Mirrors TACOBELL.plateau_estimate (see src/TACOBELL.jl): scans windows of
+  // width w, and among those within recencyTol of the flattest one, prefers
+  // the latest -- a trajectory can "walk" near a false plateau before truly
+  // converging (often to c=0), and that earlier walk can be marginally
+  // flatter than the genuine, later plateau it settles into.
   function plateauIterationIndex(values) {
     var n = values.length;
     if (n === 0) return 0;
     var w = Math.min(5, n);
     var skipfrac = 0.3;
-    var startMin = Math.max(0, Math.ceil(skipfrac * n));
+    var startMin = Math.max(0, Math.ceil(skipfrac * n) - 1);
     var windows = [];
     for (var i = 0; i <= n - w; i++) windows.push(i);
     function std(i) {
@@ -521,9 +526,13 @@
     }
     var clean = windows.filter(function (i) { return i >= startMin; });
     var candidates = clean.length ? clean : windows;
-    var best = candidates[0], bestStd = std(best);
-    candidates.forEach(function (i) { var s = std(i); if (s < bestStd) { bestStd = s; best = i; } });
-    return best + Math.floor((w - 1) / 2); // middle of the flattest window
+    var stds = {};
+    candidates.forEach(function (i) { stds[i] = std(i); });
+    var bestStd = Math.min.apply(null, candidates.map(function (i) { return stds[i]; }));
+    var recencyTol = 1.5;
+    var nearBest = candidates.filter(function (i) { return stds[i] <= recencyTol * bestStd; });
+    var best = Math.max.apply(null, nearBest);
+    return best + Math.floor((w - 1) / 2); // middle of the chosen window
   }
 
   // ---------------------------------------------------------- data fetch

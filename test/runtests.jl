@@ -309,6 +309,186 @@ using TACOBELL
         end
     end
 
+    # ── reading real TNRKit output (test/fixtures/, see its README) ─────────
+
+    FIX = joinpath(@__DIR__, "fixtures")
+    fix(name) = joinpath(FIX, name)
+
+    @testset "ingest_jld2!: current format, no symmetry (Trivial)" begin
+        mktempdir() do db
+            e = ingest_jld2!(fix("new_format_Trivial.jld2"), "phi4_real"; db_path=db)
+            @test e.params == RunParameters(model="phi4_real", symmetry="Trivial", algorithm="LoopTNR",
+                                            chi=40, K=30, mu0_sq=-0.72128, lambda=0.5)
+            @test e.source_file == "new_format_Trivial.jld2"
+            @test e.runtime_s ≈ 5999.662031888962
+            @test length(e.iterations) == 26
+            @test [r.iteration for r in e.iterations] == 0:25
+            @test e.iterations[1].normalization ≈ 1.9510657902281514
+            @test e.iterations[1].central_charge ≈ 0.8478958787058295
+
+            # a Trivial label has no fields, so JLD2 drops it from the file
+            # entirely: one sector with an empty charge per iteration
+            r = e.iterations[10]
+            @test length(r.sectors) == 1 && isempty(r.sectors[1].charge)
+            @test find_sector(r) !== nothing
+            @test r.central_charge ≈ 0.5008922791003199              # Ising c = 1/2
+            @test r.dims[1:4] ≈ [0.0, 0.1244573512248749, 0.983638293751842, 1.121785749248908] atol=1e-12
+            @test issorted(r.sectors[1].dims)
+
+            # what went in comes back out (dims stored as Float32)
+            back = load_entry(e.id; db_path=db)
+            @test back.params == e.params
+            @test back.iterations[10].dims ≈ r.dims atol=1e-6
+            @test plateau_central_charge(back).value ≈ 0.5 atol=1e-3
+        end
+    end
+
+    @testset "ingest_jld2!: current format, O(2) sectors" begin
+        mktempdir() do db
+            e = ingest_jld2!(fix("new_format_O2.jld2"), "phi4_complex"; db_path=db)
+            @test e.params == RunParameters(model="phi4_complex", symmetry="O(2)", algorithm="LoopTNR",
+                                            chi=30, K=14, mu0_sq=-0.02, lambda=0.03)
+            @test length(e.iterations) == 26
+            @test [length(r.sectors) for r in e.iterations[1:5]] == [33, 26, 21, 17, 15]
+
+            r = e.iterations[5]
+            @test r.normalization ≈ 0.7251132368829898
+            @test all(Set(keys(s.charge)) == Set(["j", "s"]) for s in r.sectors)
+            @test find_sector(r; j=0, s=0).dims[1:3] ≈ [0.0, 0.8195223020799621, 1.507688901878223] atol=1e-12
+            @test length(find_sector(r; j=1, s=2).dims) == 25
+            @test find_sector(r; j=0.5, s=2) === nothing     # integer charges only in this model
+            # every Δ belongs to exactly one sector
+            @test length(r.dims) == sum(length(s.dims) for s in r.sectors)
+        end
+    end
+
+    @testset "ingest_jld2_old!: old format, unsectored sc_dim" begin
+        mktempdir() do db
+            e = ingest_jld2_old!(fix("old_format_Z2.jld2"), "phi4_real"; symmetry="Z2", algorithm="LoopTNR", db_path=db)
+            @test e.params == RunParameters(model="phi4_real", symmetry="Z2", algorithm="LoopTNR",
+                                            chi=32, K=40, mu0_sq=-0.9518, lambda=0.7)
+            @test e.runtime_s ≈ 6104.0231169
+            @test length(e.iterations) == 19
+            @test all(r.normalization === missing for r in e.iterations)   # never recorded in old files
+            @test e.iterations[end].central_charge ≈ 0.48882018875701727
+
+            # scaling dimensions stored unsectored under "sc_dim" must not be dropped
+            r = e.iterations[10]
+            @test length(r.sectors) == 1 && isempty(r.sectors[1].charge)
+            @test length(r.dims) == 26
+            @test r.dims[1:4] ≈ [0.0, 0.12331471422313775, 0.9879542929236166, 1.1237682723758802] atol=1e-12
+        end
+    end
+
+    @testset "ingest_directory!: real files, then skipped on rerun" begin
+        mktempdir() do data
+            mktempdir() do db
+                cp(fix("new_format_Trivial.jld2"), joinpath(data, "a.jld2"))
+                cp(fix("new_format_O2.jld2"), joinpath(mkpath(joinpath(data, "sub")), "b.jld2"))
+                model(fp) = occursin("b.jld2", fp) ? "phi4_complex" : "phi4_real"
+                s = ingest_directory!(data; infer_params=model, db_path=db)
+                @test s == (total=2, inserted=2, skipped=0, failed=0)
+                @test only(query_runs(; db_path=db, symmetry="O(2)")).params.model == "phi4_complex"
+                @test isfile(joinpath(db, "CATALOG.md"))
+                @test ingest_directory!(data; infer_params=model, db_path=db) == (total=2, inserted=0, skipped=2, failed=0)
+            end
+        end
+    end
+
+    @testset "add_data!" begin
+        @test TACOBELL._jld2_format(fix("new_format_O2.jld2")) === :new
+        @test TACOBELL._jld2_format(fix("old_format_Z2.jld2")) === :old
+
+        # everything from the file: only the model is needed
+        mktempdir() do db
+            s = add_data!(fix("new_format_O2.jld2"), "phi4_complex"; db_path=db)
+            @test s == (total=1, inserted=1, skipped=0, failed=0)
+            e = only(query_runs(; db_path=db))
+            @test (e.params.symmetry, e.params.algorithm, e.params.chi) == ("O(2)", "LoopTNR", 30)
+            @test add_data!(fix("new_format_O2.jld2"), "phi4_complex"; db_path=db).skipped == 1
+        end
+
+        # a folder mixing both layouts and models; keywords fill in what old files lack
+        mktempdir() do data
+            mktempdir() do db
+                for f in ("new_format_Trivial.jld2", "old_format_Z2.jld2")
+                    cp(fix(f), joinpath(data, f))
+                end
+                write(joinpath(data, "broken.jld2"), "not an hdf5 file")
+                write(joinpath(data, "notes.txt"), "ignored: wrong extension")
+
+                # the old file records neither symmetry (no labelled sectors to
+                # infer it from) nor algorithm: stop with an explanation, but
+                # keep the runs read before it
+                err = try
+                    add_data!(data, "phi4_real"; db_path=db); nothing
+                catch e
+                    e
+                end
+                @test err isa MissingParameterError
+                @test occursin("symmetry", sprint(showerror, err))
+                @test length(query_runs(; db_path=db)) == 1      # new_format_Trivial, read first
+
+                @test_throws MissingParameterError add_data!(fix("old_format_Z2.jld2"), "phi4_real";
+                                                             symmetry="Z2", db_path=db)  # still no algorithm
+
+                s = add_data!(fix("old_format_Z2.jld2"), "phi4_real"; symmetry="Z2", algorithm="LoopTNR", db_path=db)
+                @test s.inserted == 1
+                old = only(query_runs(; db_path=db, symmetry="Z2"))
+                @test old.params.chi == 32 && old.params.K == 40
+                @test length(old.iterations[10].dims) == 26
+
+                # the unreadable file is counted, not fatal
+                rm(joinpath(data, "old_format_Z2.jld2"))
+                @test add_data!(data, "phi4_real"; db_path=db) == (total=2, inserted=0, skipped=1, failed=1)
+            end
+        end
+
+        # keywords override the file's values (with a warning when they
+        # contradict it); a model function picks the model per file
+        mktempdir() do db
+            @test_logs (:warn, r"algorithm=\"BTRG\" overrides") (:warn, r"chi=99 overrides") (:warn, r"lambda=0.25 overrides") match_mode=:any add_data!(
+                fix("new_format_Trivial.jld2"), fp -> "model_from_function";
+                algorithm="BTRG", chi=99, lambda=0.25, db_path=db)
+            e = only(query_runs(; db_path=db))
+            @test e.params == RunParameters(model="model_from_function", symmetry="Trivial", algorithm="BTRG",
+                                            chi=99, K=30, mu0_sq=-0.72128, lambda=0.25)
+        end
+
+        # old layout with labelled sectors: symmetry inferred from the labels
+        mktempdir() do db
+            add_data!(fix("old_format_U1_synthetic.jld2"), "phi4_complex"; algorithm="LoopTNR", db_path=db)
+            e = only(query_runs(; db_path=db))
+            @test e.params == RunParameters(model="phi4_complex", symmetry="U(1)", algorithm="LoopTNR",
+                                            chi=16, K=10, mu0_sq=-0.01, lambda=0.01)
+            @test [r.central_charge for r in e.iterations] ≈ [1.02, 1.001]
+            @test length(e.iterations[1].sectors) == 3                 # the empty q=1/2 sector is skipped
+            @test find_sector(e.iterations[2]; charge=0.5).dims ≈ [0.0625] # half-integer charge (HalfInt `twice`)
+            @test find_sector(e.iterations[2]; charge=-1).dims ≈ [0.25, 1.25]
+            @test all(r.normalization === missing for r in e.iterations)
+        end
+
+        # an HDF5 file that isn't TNRKit output is a failed file, not a crash
+        mktempdir() do data
+            TACOBELL.h5open(f -> (f["something"] = 1), joinpath(data, "other.jld2"), "w")
+            @test_throws ErrorException TACOBELL._jld2_format(joinpath(data, "other.jld2"))
+            @test add_data!(data, "m"; db_path=mktempdir()).failed == 1
+        end
+
+        @test_throws ArgumentError add_data!(joinpath(FIX, "does-not-exist"), "m"; db_path=mktempdir())
+
+        # symmetry inference for old files, from the charge field names
+        sec(; kw...) = ScalingDimSector(charge=Dict(String(k) => Float64(v) for (k, v) in kw), dims=[1.0])
+        it(secs...) = [CFTResults(iteration=0, sectors=collect(ScalingDimSector, secs))]
+        @test TACOBELL._infer_symmetry(it(sec(charge=0), sec(charge=0.5))) == "U(1)"
+        @test TACOBELL._infer_symmetry(it(sec(j=0, s=0), sec(j=1, s=2))) == "O(2)"
+        @test TACOBELL._infer_symmetry(it(sec(j=0.5))) == "SU(2)"
+        @test TACOBELL._infer_symmetry(it(sec(n=0), sec(n=1))) == "Z2"
+        @test TACOBELL._infer_symmetry(it(sec(n=0), sec(n=2))) === nothing    # Z3 or higher: ambiguous
+        @test TACOBELL._infer_symmetry(it(ScalingDimSector(dims=[0.0]))) === nothing  # unsectored
+        @test TACOBELL._infer_symmetry(it(sec(charge=1), sec(n=1))) === nothing       # inconsistent
+    end
+
     # ── storage format ──────────────────────────────────────────────────────
 
     # A run with every awkward case the shard format has to survive.

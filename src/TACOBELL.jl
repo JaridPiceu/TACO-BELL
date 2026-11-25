@@ -9,8 +9,8 @@ calculations, designed for use alongside
 [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/).
 
 See the package README for a full walkthrough. The core entry points are
-[`insert_run!`](@ref)/[`ingest_jld2!`](@ref)/[`ingest_directory!`](@ref) (add
-data), [`query_runs`](@ref)/[`find_closest`](@ref) (look it up), and
+[`add_data!`](@ref) (add TNRKit output: a file or a whole folder; or
+[`insert_run!`](@ref) for results built by hand),[`query_runs`](@ref)/[`find_closest`](@ref) (look it up), and
 [`export_csv`](@ref)/[`export_web`](@ref)/[`generate_catalog`](@ref) (get it
 out again, as a CSV file, as data for the Explorer webpage, or as a Markdown
 summary for browsing on GitHub).
@@ -31,6 +31,7 @@ export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_inde
 export ingest_jld2!, ingest_directory!, generate_catalog, export_csv, export_json, export_json_runs
 export export_web, compact!, import_toml_runs!
 export ingest_jld2_old!, ingest_directory_old!
+export add_data!, MissingParameterError
 export central_charge_trajectory, plateau_estimate, plateau_central_charge
 export plot_central_charge
 
@@ -485,7 +486,10 @@ function _parse_sectors(f, struct_ref, all_dims::Vector{Float64})
     sectors = ScalingDimSector[]
     for ref in kvvec
         pair_val = f[ref][]              # named tuple: first=sector label, second=indices ref
-        label      = _field(pair_val, "first")   # sector label is stored inline, not a Reference
+        # The sector label is stored inline, not as a Reference. A label with
+        # no fields (TensorKit's `Trivial`) is zero-sized, and JLD2 drops
+        # zero-sized fields entirely, so the pair then has only `second`.
+        label      = hasfield(typeof(pair_val), :first) ? getfield(pair_val, :first) : (;)
         second_ref = _field(pair_val, "second")  # indices vector IS a Reference
 
         charge = Dict{String, Float64}(
@@ -554,13 +558,7 @@ function _ingest_directory_generic!(
         extension   :: String  = ".jld2",
         allow_duplicate :: Bool = false,
     )
-    files = String[]
-    for (root, _, fnames) in walkdir(dir)
-        for fn in fnames
-            endswith(lowercase(fn), lowercase(extension)) && push!(files, joinpath(root, fn))
-        end
-    end
-    sort!(files)
+    files = _find_files(dir, extension)
     isempty(files) && @warn "No *$(extension) files found under $dir"
 
     seen = _existing_keys(db_path)
@@ -587,6 +585,14 @@ function _ingest_directory_generic!(
             n_ok += 1
             @info "$label -> read"
         catch err
+            # a parameter the caller has to supply would fail every file the
+            # same way: stop at the first one with the explanation instead of
+            # logging hundreds of identical warnings (keeping what was read)
+            if err isa MissingParameterError
+                isempty(buffer) || flush!()
+                n_ok > 0 && generate_catalog(; db_path)
+                rethrow()
+            end
             n_err += 1
             @warn "$label -> FAILED" exception=(err, catch_backtrace())
         end
@@ -714,7 +720,15 @@ function _parse_old_iteration(f, data_ref)
         val = f[_field(pair_val, "second")][]
 
         if key isa AbstractString
-            key == "c" && (cc = Float64(_field(val, "re")))
+            if key == "c"
+                cc = Float64(_field(val, "re"))
+            elseif key == "sc_dim" && val isa AbstractVector
+                # runs without a symmetry-resolved spectrum (e.g. the
+                # "TransLine" files) store every Δ unsectored under "sc_dim":
+                # keep them as one sector with an empty (trivial) charge
+                dims = Float64[_field(v, "re") for v in val]
+                isempty(dims) || push!(sectors, ScalingDimSector(dims=sort(dims)))
+            end
             # any other string-keyed scalar is an unrecognized diagnostic — skip it
         else
             charge = Dict{String, Float64}(
@@ -750,6 +764,149 @@ function ingest_directory_old!(
         "old-format files never store symmetry/algorithm: infer_params must return a full " *
         "RunParameters with both set, not just a model name (see ingest_jld2_old!)"))
     _ingest_directory_generic!(reader, dir; infer_params, db_path, extension, allow_duplicate)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API — add_data!: one entry point for any TNRKit output, file or folder
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    MissingParameterError(msg)
+
+Thrown by [`add_data!`](@ref) when a run parameter is neither stored in the
+file nor inferable from it, so it has to be passed as a keyword.
+"""
+struct MissingParameterError <: Exception
+    msg::String
+end
+Base.showerror(io::IO, e::MissingParameterError) = print(io, "MissingParameterError: ", e.msg)
+
+"""
+    add_data!(path, model; symmetry, algorithm, chi, K, mu0_sq, lambda,
+              db_path, extension=".jld2", allow_duplicate=false)
+        -> (; total, inserted, skipped, failed)
+
+Add TNRKit output to the database: `path` is one `.jld2` file or a folder,
+searched recursively. This is the recommended way to add data; it works for
+both the current and the pre-TNRKit-v0.5 file layout (detected per file, so a
+folder can mix them).
+
+`model` is the only thing you must give, since files never store it in the
+database's naming (`"phi4_real"`, `"phi4_complex"`, …). For a folder mixing
+models, pass a function `filepath -> model` instead of a string.
+
+Every other parameter is read from each file. Any of them can also be passed
+as a keyword, which then **overrides** the file's value for every file:
+
+- `chi`, `K`, `mu0_sq`, `lambda`: always stored in the file.
+- `symmetry`: stored in current-format files. For old files it's inferred
+  from the sector labels (`charge` → `"U(1)"`, `n` (0/1 only) → `"Z2"`,
+  `j` → `"SU(2)"`, `j` + `s` → `"O(2)"`). Old files without labelled
+  sectors need it passed explicitly.
+- `algorithm`: stored in current-format files; old files need it passed.
+
+If a needed parameter can't be found, a [`MissingParameterError`](@ref)
+stops the batch at the first such file, saying which keyword to pass (any
+runs read before it are kept). Files already in the database are skipped,
+and an unreadable file is logged and skipped without stopping the batch.
+`db/CATALOG.md` is regenerated at the end.
+
+# Examples
+```julia
+using TACOBELL
+add_data!("data/O2_runs", "phi4_complex")                    # everything from the files
+add_data!("data/old_runs", "phi4_complex"; algorithm="LoopTNR")
+add_data!("data/transline", "phi4_real"; symmetry="Z2", algorithm="LoopTNR")
+add_data!("data/mixed", fp -> occursin("Com_", basename(fp)) ? "phi4_complex" : "phi4_real")
+```
+From the command line: `julia --project=. scripts/add_data.jl <path> <model> [key=value ...]`.
+"""
+function add_data!(
+        path   :: AbstractString,
+        model;
+        symmetry  = nothing,
+        algorithm = nothing,
+        chi       = nothing,
+        K         = nothing,
+        mu0_sq    = nothing,
+        lambda    = nothing,
+        db_path   :: String = DB_PATH(),
+        extension :: String = ".jld2",
+        allow_duplicate :: Bool = false,
+    )
+    overrides = (; symmetry, algorithm, chi, K, mu0_sq, lambda)
+    infer = model isa AbstractString ? (_ -> String(model)) : model
+    reader(fp, m) = _read_any(fp, m, overrides)
+    _ingest_directory_generic!(reader, String(path); infer_params = infer, db_path, extension, allow_duplicate)
+end
+
+# `path` may be a single file (taken as is) or a folder (searched recursively).
+function _find_files(path::AbstractString, extension::AbstractString)
+    isfile(path) && return [String(path)]
+    isdir(path) || throw(ArgumentError("no such file or directory: $path"))
+    files = String[]
+    for (root, _, fnames) in walkdir(path), fn in fnames
+        endswith(lowercase(fn), lowercase(extension)) && push!(files, joinpath(root, fn))
+    end
+    return sort!(files)
+end
+
+"""Which TNRKit output layout a file uses: `:new` (v0.5+) or `:old`."""
+function _jld2_format(filepath::AbstractString)
+    HDF5.h5open(filepath, "r") do f
+        haskey(f, "chi") && return :new
+        haskey(f, "ndimtrunc") && return :old
+        error("not a TNRKit output file (neither a `chi` nor an `ndimtrunc` key)")
+    end
+end
+
+# Symmetry from the charge field names of the sector labels (TensorKit
+# irreps: U1Irrep has `charge`, ZNIrrep `n`, SU2Irrep `j`, CU1Irrep `j`+`s`).
+# `nothing` when there are no labelled sectors or the labels are ambiguous.
+function _infer_symmetry(iters::Vector{CFTResults})
+    fieldsets = Set(Set(keys(s.charge)) for r in iters for s in r.sectors if !isempty(s.charge))
+    length(fieldsets) == 1 || return nothing
+    ks = only(fieldsets)
+    ks == Set(["charge"]) && return "U(1)"
+    ks == Set(["j", "s"]) && return "O(2)"
+    ks == Set(["j"])      && return "SU(2)"
+    if ks == Set(["n"])
+        # ZN with N unknown: only 0/1 seen means Z2 (Z3+ always shows n=2 too)
+        maximum(s.charge["n"] for r in iters for s in r.sectors if !isempty(s.charge)) <= 1 && return "Z2"
+    end
+    return nothing
+end
+
+# Read either layout, then fill in / override the parameters.
+function _read_any(fp::AbstractString, model, o::NamedTuple)
+    model isa AbstractString ||
+        throw(ArgumentError("the model function must return a String, got $(repr(model))"))
+    e = _jld2_format(fp) === :new ? _read_jld2(fp, _blank_params(model)) :
+                                    _read_jld2_old(fp, _blank_params(model))
+    p = e.params
+    pick(override, fromfile) = override === nothing ? fromfile : override
+    for (k, v) in pairs(o)
+        stored = getfield(p, k)
+        v === nothing || stored == "" || stored == v ||
+            @warn "$(basename(fp)): $k=$(repr(v)) overrides the value stored in the file ($(repr(stored)))" maxlog=5
+    end
+
+    sym = pick(o.symmetry, isempty(p.symmetry) ? something(_infer_symmetry(e.iterations), "") : p.symmetry)
+    alg = pick(o.algorithm, p.algorithm)
+    isempty(sym) && throw(MissingParameterError(
+        "$(basename(fp)): the file doesn't record its symmetry and it can't be inferred " *
+        "from the sector labels. Pass it, e.g. add_data!(path, model; symmetry=\"Z2\")."))
+    isempty(alg) && throw(MissingParameterError(
+        "$(basename(fp)): the file doesn't record its algorithm (pre-TNRKit-v0.5 output). " *
+        "Pass it, e.g. add_data!(path, model; algorithm=\"LoopTNR\")."))
+
+    params = RunParameters(
+        model = p.model, symmetry = String(sym), algorithm = String(alg),
+        chi = Int(pick(o.chi, p.chi)), K = Int(pick(o.K, p.K)),
+        mu0_sq = Float64(pick(o.mu0_sq, p.mu0_sq)), lambda = Float64(pick(o.lambda, p.lambda)),
+    )
+    DatabaseEntry(id = e.id, created_at = e.created_at, source_file = e.source_file,
+                  runtime_s = e.runtime_s, params = params, iterations = e.iterations)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────

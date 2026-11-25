@@ -42,10 +42,11 @@ export_csv(runs; out="o2.csv")                           # for Excel / pandas / 
 ## Add your own runs
 
 ```
-julia --project=. scripts/bulk_ingest.jl path/to/jld2/files
+julia --project=. scripts/add_data.jl path/to/jld2/files phi4_complex
 ```
 
-Then commit the new files in `db/shards/` and open a pull request. The
+Give a folder (or one file) and the model; everything else is read from the
+files. Then commit the new files in `db/shards/` and open a pull request. The
 website updates itself once it's merged.
 → [Adding data](docs/adding-data.md), including how to save compatible
 files from TNRKit

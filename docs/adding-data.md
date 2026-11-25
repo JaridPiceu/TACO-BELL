@@ -29,32 +29,54 @@ These key names are what TACOBELL reads. `symmetry` and `algorithm` are
 optional but recommended. The model name is never stored in the file; you
 give it when ingesting.
 
-## 2. Ingest
+## 2. Add it to the database
 
-A whole folder (the usual case). Files already in the database are skipped,
-and a broken file is logged without stopping the batch:
+Give a folder (searched recursively) or a single file, and the model name.
+Everything else (χ, K, μ₀², λ, symmetry, algorithm) is read from each file:
 
 ```
-julia --project=. scripts/bulk_ingest.jl path/to/data/dir
+julia --project=. scripts/add_data.jl path/to/data/dir phi4_complex
 ```
 
-Edit `infer_params` in [`scripts/bulk_ingest.jl`](../scripts/bulk_ingest.jl)
-first if the folder isn't all `phi4_complex`. From Julia, the same thing is:
+or, from Julia:
 
 ```julia
 using TACOBELL
-ingest_directory!("path/to/data/dir"; infer_params = _ -> "phi4_complex")
+add_data!("path/to/data/dir", "phi4_complex")
 ```
 
-A single file:
+Old and new TNRKit files are both recognized, even mixed in one folder.
+Files already in the database are skipped, so it's safe to re-run on a
+folder you've added to. A broken file is logged and skipped without stopping
+the rest.
+
+**Supplying or overriding a parameter.** Pass it as `key=value` to the
+script, or as a keyword in Julia. It then applies to every file, replacing
+the value stored in it (with a warning if the two differ):
+
+```
+julia --project=. scripts/add_data.jl path/to/old/runs phi4_complex algorithm=LoopTNR
+julia --project=. scripts/add_data.jl path/to/runs phi4_real symmetry=Z2 algorithm=LoopTNR
+```
+
+Keys: `symmetry`, `algorithm`, `chi`, `K`, `mu0_sq`, `lambda`. If a file
+doesn't record something it needs, `add_data!` stops at the first such file
+and tells you which key to pass.
+
+**A folder with several models:** in Julia, pass a function of the file path
+instead of a model name:
 
 ```julia
-ingest_jld2!("Com_PD_O2_mu0-2_0_lam1_0_K8_chi16_iter20.jld2", "phi4_complex")
+add_data!("path/to/data", fp -> startswith(basename(fp), "Com_") ? "phi4_complex" : "phi4_real")
 ```
 
-Every ingest adds **new** files under `db/shards/` and never changes existing
-ones. `ingest_directory!` also updates `db/CATALOG.md`; after other inserts,
-run `generate_catalog()`.
+Every addition creates **new** files under `db/shards/` and never changes
+existing ones. `db/CATALOG.md` is updated automatically. Before opening a
+pull request you can check the result the same way CI does:
+
+```
+julia --project=. scripts/check_db.jl
+```
 
 **Results you computed some other way** can be added by building the
 structs yourself; see
@@ -65,18 +87,12 @@ files afterwards.
 
 ### Old files (before TNRKit v0.5)
 
-These store the data differently and never record the symmetry or
-algorithm, so you must supply both:
-
-```julia
-ingest_jld2_old!("Com_CFT_μ0-0.01_λ0.01_K10truncrank16_niter15.jld2", "phi4_complex";
-                 symmetry="U(1)", algorithm="LoopTNR")
-```
-
-For a folder, use [`scripts/bulk_ingest_old.jl`](../scripts/bulk_ingest_old.jl).
-Not sure which symmetry? The sector labels give it away: `charge` → `U(1)`,
-`n` → `Z2`/`ZN`, `j` alone → `SU(2)`, `j` + `s` → `O(2)`. These files have no
-normalization, so it is `missing`.
+`add_data!` handles these too, but they never record the algorithm, so pass
+`algorithm=...`. The symmetry is worked out from the sector labels
+(`charge` → `U(1)`, `n` → `Z2`, `j` alone → `SU(2)`, `j` + `s` → `O(2)`).
+Files without symmetry-labelled sectors (e.g. the "TransLine" runs) need
+`symmetry=...` as well. These files have no normalization, so it is
+`missing`.
 
 ## 3. Share it
 

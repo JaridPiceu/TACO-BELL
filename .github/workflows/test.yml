@@ -42,15 +42,71 @@ jobs:
 
       - uses: julia-actions/julia-runtest@e89ac6c957d7c4d7e0cb3162f12d8290a008f9d1 # v1.13.0
 
+      # Coverage (latest Julia only): julia-runtest already records it; turn
+      # it into lcov.info, show the per-file numbers on the run's summary
+      # page and keep the file as an artifact. No external service needed.
+      - uses: julia-actions/julia-processcoverage@03114f09f119417c3242a9fb6e0b722676aedf38 # v1.2.2
+        if: matrix.julia-version == '1'
+
+      - name: Coverage summary
+        if: matrix.julia-version == '1'
+        run: |
+          {
+            echo "### Line coverage"
+            echo
+            echo "| file | lines hit | coverage |"
+            echo "|---|---|---|"
+            awk -F: '
+              /^SF:/ { f = $2; sub(".*/src/", "src/", f) }
+              /^LH:/ { hit[f] = $2; th += $2 }
+              /^LF:/ { found[f] = $2; tf += $2 }
+              END {
+                for (f in found) printf "| %s | %d / %d | %.1f%% |\n", f, hit[f], found[f], 100 * hit[f] / found[f]
+                printf "| **total** | %d / %d | **%.1f%%** |\n", th, tf, 100 * th / tf
+              }' lcov.info
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.julia-version == '1'
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+  # The committed database itself: every shard readable, no duplicate runs,
+  # sane values, and db/CATALOG.md up to date (scripts/check_db.jl).
+  database:
+    name: database
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # lets julia-actions/cache prune its old caches
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        with:
+          version: "1"
+
+      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
+
+      - uses: julia-actions/julia-buildpkg@e3eb439fad4f9aba7da2667e7510e4a46ebc46e1 # v1.7.0
+
+      - name: Check db/
+        run: julia --project=. scripts/check_db.jl
+
   # Single, stable status for branch protection: the `protect-main` ruleset
   # requires a check named exactly "test". Matrix jobs report as
-  # "julia lts" / "julia 1", so this job gathers them under that one name.
+  # "julia lts" / "julia 1", so this job gathers them, and the database
+  # check, under that one name.
   test:
     name: test
     if: always()
-    needs: julia
+    needs: [julia, database]
     runs-on: ubuntu-latest
     steps:
-      - name: All Julia versions passed
+      - name: All Julia versions and the database check passed
         run: |
           [ "${{ needs.julia.result }}" = "success" ] || { echo "julia jobs: ${{ needs.julia.result }}"; exit 1; }
+          [ "${{ needs.database.result }}" = "success" ] || { echo "database check: ${{ needs.database.result }}"; exit 1; }

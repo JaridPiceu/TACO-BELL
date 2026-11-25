@@ -5,10 +5,12 @@ Manifest.toml
 *.jl.*.cov
 *.jl.mem
 
-# Raw TNRKit outputs — ingest these into db/ with ingest_jld2! /
-# ingest_directory!, don't commit the raw files themselves.
+# Raw TNRKit outputs — add these to db/ with add_data! (scripts/add_data.jl),
+# don't commit the raw files themselves.
 *.jld2
 *.h5
+# …except the small real TNRKit files the tests read (see test/fixtures/README.md)
+!test/fixtures/*.jld2
 # …except the database itself: compressed HDF5 shards (see src/storage.jl).
 !db/shards/*.h5
 # half-written shard (only exists if a write was interrupted)

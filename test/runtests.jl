@@ -80,8 +80,7 @@ using TACOBELL
         end
 
         @testset "rebuild_index!" begin
-            rm(joinpath(tmp, "index.toml"))
-            rebuild_index!(; db_path=tmp)
+            @test rebuild_index!(; db_path=tmp) == 2
             hits = query_runs(; db_path=tmp, symmetry="Z2")
             @test length(hits) == 2
         end
@@ -265,11 +264,13 @@ using TACOBELL
 
             @test occursin("c=0.50", sprint(show, entry))
 
-            idx = TOML.parsefile(joinpath(tmp, "index.toml"))["entry"]
+            idx = TACOBELL._load_index(tmp)
             @test idx[1]["central_charge"] ≈ 0.5 atol=0.01
 
+            # the catalog is a per-setup summary now (no per-run c column),
+            # but must certainly never show the blown-up values
             catalog = read(generate_catalog(; db_path=tmp), String)
-            @test occursin("0.5000", catalog) || occursin("0.50", catalog)
+            @test !occursin("100.0", catalog) && !occursin("50.0", catalog)
 
             summary_out = joinpath(tmp, "summary.csv")
             export_csv([entry]; out=summary_out)
@@ -305,6 +306,201 @@ using TACOBELL
             @test length(query_runs(; db_path=tmp, model="phi4_complex")) == 2
 
             @test_throws ErrorException correct_field!(:chi, 1, 2; db_path=tmp)
+        end
+    end
+
+    # ── storage format ──────────────────────────────────────────────────────
+
+    # A run with every awkward case the shard format has to survive.
+    function tricky_entry(; mu0 = -0.5, seed = 1)
+        dims(n, off) = sort([off + 0.123456789 * k + 1e-3 * seed for k in 0:(n - 1)])
+        DatabaseEntry(
+            params = RunParameters(model="phi4_complex", symmetry="O(2)", algorithm="LoopTNR",
+                                   chi=32, K=12, mu0_sq=mu0, lambda=0.5),
+            source_file = "run_μ0$(mu0).jld2",
+            runtime_s = missing,
+            iterations = [
+                CFTResults(iteration=0),   # no c, no normalization, no sectors
+                CFTResults(iteration=1, normalization=0.25, central_charge=1.0000123456789,
+                           notes="a note, with \"quotes\"",
+                           sectors=[
+                               ScalingDimSector(charge=Dict("j"=>0.5, "s"=>2.0), dims=dims(7, 0.1)),
+                               ScalingDimSector(dims=[0.0]),                     # trivial sector
+                               ScalingDimSector(charge=Dict("j"=>0.0, "s"=>0.0), dims=Float64[]),
+                           ]),
+                CFTResults(iteration=2, normalization=-1.5, central_charge=missing,
+                           sectors=[ScalingDimSector(charge=Dict("j"=>1.0, "s"=>2.0), dims=dims(3, 5.0))]),
+            ],
+        )
+    end
+
+    function same_entry(a, b; atol)
+        a.id == b.id && a.created_at == b.created_at && a.params == b.params &&
+        a.source_file == b.source_file && isequal(a.runtime_s, b.runtime_s) &&
+        length(a.iterations) == length(b.iterations) &&
+        all(zip(a.iterations, b.iterations)) do (x, y)
+            x.iteration == y.iteration && isequal(x.normalization, y.normalization) &&
+            isequal(x.central_charge, y.central_charge) && x.notes == y.notes &&
+            length(x.sectors) == length(y.sectors) &&
+            all(zip(x.sectors, y.sectors)) do (s, t)
+                s.charge == t.charge && length(s.dims) == length(t.dims) &&
+                all(isapprox.(s.dims, t.dims; atol, rtol=0))
+            end
+        end
+    end
+
+    @testset "shard round trip" begin
+        mktempdir() do tmp
+            e = tricky_entry()
+            insert_runs!([e]; db_path=tmp)
+            @test length(readdir(joinpath(tmp, "shards"))) == 1
+            back = load_entry(e.id; db_path=tmp)
+            @test same_entry(e, back; atol=1e-6)            # Float32 dims by default
+            @test back.iterations[2].dims[1] == 0.0
+            @test find_sector(back.iterations[2]; j=0.5, s=2) !== nothing
+        end
+        mktempdir() do tmp
+            e = tricky_entry()
+            old = TACOBELL.DIMS_TYPE[]
+            TACOBELL.DIMS_TYPE[] = Float64
+            try
+                insert_runs!([e]; db_path=tmp)
+            finally
+                TACOBELL.DIMS_TYPE[] = old
+            end
+            @test same_entry(e, load_entry(e.id; db_path=tmp); atol=0.0)   # lossless
+        end
+    end
+
+    @testset "insert_runs!: batches, duplicates, bulk reads, compact!" begin
+        mktempdir() do tmp
+            batch = [tricky_entry(; mu0=-0.01k, seed=k) for k in 1:40]
+            insert_runs!(batch; db_path=tmp)
+            @test length(TACOBELL._shard_files(tmp)) == 1
+            @test length(query_runs(; db_path=tmp)) == 40
+
+            # many hits from one shard take the read-the-whole-column path
+            all_back = query_runs(; db_path=tmp, symmetry="O(2)")
+            byid = Dict(e.id => e for e in all_back)
+            @test all(same_entry(e, byid[e.id]; atol=1e-6) for e in batch)
+
+            # duplicates: against the database, and within one batch
+            @test_throws ErrorException insert_runs!([tricky_entry(; mu0=-0.01)]; db_path=tmp)
+            twins = [tricky_entry(; mu0=9.0), tricky_entry(; mu0=9.0)]
+            @test_throws ErrorException insert_runs!(twins; db_path=tmp)
+            @test length(query_runs(; db_path=tmp)) == 40      # nothing written on error
+
+            # a batch larger than the shard cap is split
+            old = TACOBELL.SHARD_MAX_DIMS[]
+            TACOBELL.SHARD_MAX_DIMS[] = 25
+            try
+                insert_runs!([tricky_entry(; mu0=1.0k) for k in 1:4]; db_path=tmp)
+            finally
+                TACOBELL.SHARD_MAX_DIMS[] = old
+            end
+            @test length(TACOBELL._shard_files(tmp)) == 3
+
+            # single inserts make small shards; compact! merges them, losing nothing
+            for k in 1:3
+                insert_run!(tricky_entry(; mu0=10.0 + k).params, tricky_entry().iterations; db_path=tmp)
+            end
+            ids_before = sort([r["id"] for r in TACOBELL._load_index(tmp)])
+            @test compact!(; db_path=tmp) == 6
+            @test length(TACOBELL._shard_files(tmp)) == 1
+            @test sort([r["id"] for r in TACOBELL._load_index(tmp)]) == ids_before
+            @test same_entry(batch[7], load_entry(batch[7].id; db_path=tmp); atol=1e-6)
+
+            @test occursin("47 run(s) in 1 setup(s)", read(generate_catalog(; db_path=tmp), String))
+        end
+    end
+
+    @testset "import_toml_runs! (legacy format)" begin
+        mktempdir() do tmp
+            dir = mkpath(joinpath(tmp, "runs"))
+            open(joinpath(dir, "11111111-2222-3333-4444-555555555555.toml"), "w") do io
+                print(io, """
+                created_at = "2026-09-21T11:02:31.803"
+                runtime_s = 12.5
+                id = "11111111-2222-3333-4444-555555555555"
+                source_file = "old.jld2"
+                [params]
+                model = "phi4_real"
+                symmetry = "Z2"
+                algorithm = "LoopTNR"
+                chi = 16
+                K = 10
+                mu0_sq = -0.3
+                lambda = 0.2
+                [[iterations]]
+                central_charge = 0.5
+                iteration = 0
+                notes = ""
+                    [[iterations.sectors]]
+                    dims = [0.0, 1.0]
+                        [iterations.sectors.charge]
+                        n = 0.0
+                    [[iterations.sectors]]
+                    dims = [0.125]
+                        [iterations.sectors.charge]
+                        n = 1.0
+                """)
+            end
+            db = joinpath(tmp, "db")
+            @test import_toml_runs!(dir; db_path=db) == 1
+            e = load_entry("11111111-2222-3333-4444-555555555555"; db_path=db)
+            @test e.created_at == "2026-09-21T11:02:31.803"
+            @test e.runtime_s == 12.5
+            @test e.iterations[1].normalization === missing
+            @test find_sector(e.iterations[1]; n=1).dims == [0.125]
+            @test import_toml_runs!(dir; db_path=db) == 0      # already there: skipped
+        end
+    end
+
+    @testset "export_web" begin
+        # Julia port of decodeRun() in web/index.html, to pin the binary format.
+        function decode_run(bytes)
+            raw = TACOBELL._zlib_decompress(bytes, 1 << 24)
+            @test raw[1:4] == b"TBW1"
+            u32(o) = Int(ltoh(reinterpret(UInt32, raw[o+1:o+4])[1]))
+            nIter, nSec, nDims, nLab = u32(4), u32(8), u32(12), u32(16)
+            o = 20 + nLab
+            take(T, n) = (v = ltoh.(reinterpret(T, raw[o+1:o+n*sizeof(T)])); o += n * sizeof(T); collect(v))
+            iters = take(Int32, nIter); cc = take(Float64, nIter); spi = take(UInt16, nIter)
+            lab = take(UInt16, nSec); nd = take(UInt16, nSec)
+            sh = raw[o+1:o+4nDims]
+            q = [reinterpret(Int32, UInt8[sh[i], sh[nDims+i], sh[2nDims+i], sh[3nDims+i]])[1] for i in 1:nDims]
+            labels = String(raw[21:20+nLab])
+            dims = Vector{Vector{Float64}}(); k = 0
+            for s in 1:nSec
+                acc = 0; v = Float64[]
+                for _ in 1:nd[s]; k += 1; acc += q[k]; push!(v, acc / 1e4); end
+                push!(dims, v)
+            end
+            (; iters, cc, spi, lab, dims, labels)
+        end
+
+        mktempdir() do tmp
+            db = joinpath(tmp, "db"); web = joinpath(tmp, "web")
+            e = tricky_entry()
+            insert_runs!([e]; db_path=db)
+            mkpath(joinpath(web, "runs")); write(joinpath(web, "runs", "stale.json"), "{}")
+            export_web(; db_path=db, dir=web)
+            @test !isfile(joinpath(web, "runs", "stale.json"))
+
+            idx = read(joinpath(web, "index.json"), String)
+            @test count(==('{'), idx) == count(==('}'), idx)
+            @test occursin("\"symmetries\":[\"O(2)\"]", idx)
+            sid = first(replace(e.id, "-" => ""), 12)
+            @test occursin(sid, idx)
+
+            d = decode_run(read(joinpath(web, "runs", sid * ".bin")))
+            @test d.iters == [0, 1, 2]
+            @test isnan(d.cc[1]) && d.cc[2] == 1.0000123456789 && isnan(d.cc[3])
+            @test d.spi == [0, 3, 1]
+            @test occursin("\"j\":0.5", d.labels) && occursin("{}", d.labels)
+            want = [s.dims for r in e.iterations for s in r.sectors]
+            @test length(d.dims) == length(want)
+            @test all(all(abs.(a .- b) .<= 0.5e-4 + 1e-9) for (a, b) in zip(d.dims, want))
         end
     end
 end

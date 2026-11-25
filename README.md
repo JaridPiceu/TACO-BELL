@@ -10,9 +10,11 @@ that an expensive calculation only ever has to be run once. Add a result,
 look it up later by its physical parameters, and export it for anyone
 (Julia or not) to use.
 
-There's no server and nothing to install beyond Julia packages: every run
-is just a plain text file in [`db/runs/`](db/runs/), tracked in this git
-repo. Works for any manifest symmetry TensorKit supports (`Trivial`, `U(1)`,
+There's no server and nothing to install beyond Julia packages: the data
+lives in a handful of compressed HDF5 files in [`db/shards/`](db/shards/),
+tracked in this git repo, and browsable online in the
+[Explorer](https://jaridpiceu.github.io/TACO-BELL/). Works for any manifest
+symmetry TensorKit supports (`Trivial`, `U(1)`,
 `Z_N`, `SU(2)`, `O(2)`, ...) — sector labels are read generically, not
 hardcoded to one symmetry. Designed for use with
 [TNRKit](https://github.com/QuantumKitHub/TNRKit.jl/).
@@ -134,21 +136,23 @@ export_csv(query_runs(symmetry="O(2)"); out="o2_results.csv")   # one row per ru
 export_csv(runs[1]; out="run_detail.csv")                        # everything in one run, long format
 ```
 
-For browsing on GitHub without Julia at all, regenerate the Markdown table
-after adding new runs:
+For an overview on GitHub without Julia at all, [`db/CATALOG.md`](db/CATALOG.md)
+lists every setup (model, symmetry, algorithm, χ, K) with how many runs and
+which λ/μ₀² it covers. It regenerates automatically after
+`ingest_directory!`; after other inserts, run:
 
 ```julia
 generate_catalog()   # writes db/CATALOG.md
 ```
 
-Or browse it interactively in a webpage — pick a symmetry/algorithm, type in
-μ₀²/λ, and get the matched central charge and scaling-dimension sectors back,
-with a small phase-diagram chart. See
+Or browse it interactively in the
+[Explorer webpage](https://jaridpiceu.github.io/TACO-BELL/) — pick a
+symmetry/algorithm, type in μ₀²/λ, and get the matched central charge and
+scaling-dimension sectors back, with a small phase-diagram chart. See
 [The Explorer webpage](#the-explorer-webpage) in the Reference section.
 
-This repo is currently **private**, so "browsable by anyone" means anyone
-with access to it — switch it to public in GitHub's settings if you want
-that to mean the public internet.
+The data is also plain HDF5, so it can be read without TACOBELL at all
+(e.g. with `h5py` in Python) — see [Database layout](#database-layout).
 
 ---
 
@@ -158,7 +162,9 @@ that to mean the public internet.
 
 `ingest_directory!` walks a directory recursively, ingests every matching
 file, skips ones already in the database, and logs (without aborting) any
-file that fails to read:
+file that fails to read. Runs are written in bulk — a few shard files per
+batch rather than one write per run — so thousands of files ingest about
+as fast as they can be read:
 
 ```julia
 using TACOBELL
@@ -181,6 +187,21 @@ setup, then:
 ```
 julia --project=. scripts/bulk_ingest.jl path/to/data/dir
 ```
+
+Then commit the new shard file(s) and the catalog:
+
+```
+git add db/shards db/CATALOG.md
+git commit -m "Add <n> runs: <short description>"
+```
+
+`main` is protected, so push this to a branch and open a pull request; once
+it's merged, the Explorer redeploys with the new data automatically.
+
+Already have the runs as `DatabaseEntry` objects (or are calling
+`insert_run!` in a loop)? Use `insert_runs!(entries)` to write them in one
+go, or run `compact!()` afterwards to merge the many small shard files
+single inserts leave behind.
 
 ### Producing a compatible JLD2 file from TNRKit
 
@@ -292,125 +313,96 @@ dozens of these per iteration).
 
 ```
 db/
-├── index.toml       ← lightweight summary of all runs (auto-managed)
-├── CATALOG.md        ← human-readable table for browsing on GitHub (auto-managed)
-└── runs/
-    ├── <uuid>.toml  ← one file per run, all iterations inside
+├── CATALOG.md                       ← per-setup overview for GitHub (auto-generated)
+├── LICENSE
+└── shards/
+    ├── 20261125-140312-1a2b3c4d.h5  ← a batch of runs, compressed (≤ ~35 MB each)
     └── …
 ```
 
-Never edit `index.toml` or `CATALOG.md` by hand — both are generated from
-the `runs/*.toml` files (`rebuild_index!()` / `generate_catalog()`).
+Each ingest writes **new** shard files and never modifies existing ones, so
+git stores every byte of data once and adding a batch never rewrites old
+files (no growing index or catalog diffs, no merge conflicts between
+branches that both add data). The run index — what `query_runs`,
+`find_closest` and `summarize_db` search — is derived from the shards when
+first needed and cached in memory; nothing derived is stored on disk.
 
-### Repo size: what is and isn't committed
+Inside a shard, everything is stored column-wise (full layout in
+[`src/storage.jl`](src/storage.jl)):
 
-At a few thousand runs, `db/runs/` is genuinely large (each run's full
-per-iteration, per-sector detail adds up) — that's the actual database, so
-it's tracked in git on purpose, same as any research-data repo of this
-shape. `web/data/runs/` would be exactly the same amount of data a second
-time, in JSON instead of TOML — 100% derived, regenerated in seconds by
-`export_json_runs`, and not committed (`.gitignore` excludes it). Only
-`web/data/tacobell.json`, the lightweight index (a few hundred bytes per
-run — no per-iteration detail), is tracked, the same way `db/index.toml`
-and `db/CATALOG.md` are: small, auto-regenerated summaries, safe to keep in
-git even as the underlying data grows.
+| Group | Columns |
+|---|---|
+| `/runs` | `id`, `created_at`, `source_file`, `model`, `symmetry`, `algorithm`, `chi`, `K`, `mu0_sq`, `lambda`, `runtime_s`, `n_iterations` |
+| `/iterations` | `iteration`, `normalization`, `central_charge`, `n_sectors` (+ any non-empty `notes`) |
+| `/sectors` | `charge` (index into `charge_labels`, e.g. `"j=1.0;s=2.0"`), `n_dims` |
+| `/dims` | every scaling dimension, flat |
 
-Practically, this means:
-- `git clone` gets you the real database (`db/`) and a working Explorer
-  *index* (enough to search and see summary results), but not the
-  Explorer's per-iteration detail/charts until you run
-  `julia --project=. scripts/update_web.jl` locally.
-- Deploying the Explorer (see below) means uploading the regenerated
-  `web/` folder directly, not just pushing to git.
+A run owns the next `n_iterations` iteration rows, an iteration the next
+`n_sectors` sector rows, a sector the next `n_dims` values of `/dims`;
+`missing` is stored as `NaN`. Numeric columns are compressed with HDF5's
+standard shuffle + deflate filters, so any HDF5 reader opens them — e.g. in
+Python:
 
-If `db/runs/` itself eventually gets too large for comfortable git use
-(GitHub starts recommending Git LFS somewhere in the multi-GB range), that
-would be a deliberate call to make later — nothing here forces it, and nothing
-about the current setup blocks switching to LFS for `db/runs/*.toml`
-specifically if it comes to that.
+```python
+import h5py, numpy as np
+with h5py.File("db/shards/<file>.h5") as f:
+    c = f["iterations/central_charge"][:]                 # every iteration's c
+    n_it = f["runs/n_iterations"][:]
+    first = np.concatenate([[0], np.cumsum(n_it)])        # run r: rows first[r]:first[r+1]
+```
+
+**Precision.** Scaling dimensions are stored as `Float32` (7 significant
+digits; relative error ≤ 6·10⁻⁸, i.e. ≤ 2·10⁻⁶ for Δ up to ~13, far below the accuracy of any TNR
+result), which makes the database ~2.5× smaller than `Float64`, whose last
+digits are numerical noise that doesn't compress. Central charges,
+normalizations and parameters are full `Float64`. To store scaling
+dimensions losslessly instead, set `TACOBELL.DIMS_TYPE[] = Float64` before
+ingesting; each shard records its own type, so both can coexist.
+
+### Repo size
+
+| | Before (one TOML file per run) | Now (HDF5 shards) |
+|---|---|---|
+| ~18k runs in `db/` | 2.9 GB in 17,939 files | 318 MB in 11 files (~33 MB each) |
+| Added to git per batch | the new runs + a full rewrite of `index.toml` (4.5 MB) and `CATALOG.md` (2.4 MB) | only the new shard file(s) |
+| Explorer data | 1.3 GB of JSON (over GitHub Pages' 1 GB limit) | 188 MB, not committed |
+
+`web/data/` is never committed: it's derived entirely from `db/shards/`
+and regenerated by the Pages workflow on every deploy (see below).
 
 ### The Explorer webpage
 
 [`web/index.html`](web/index.html) is a single static page (no server, no
-build step) that lets you pick a model/symmetry/algorithm, type in μ₀²/λ,
-and see the matched run's central charge and scaling-dimension sectors —
-plus an iteration slider (defaulting to the plateau, like
-`plateau_central_charge`), a *c* vs iteration chart, a lowest-Δ-vs-iteration
-chart, and a phase-diagram chart of *c* vs μ₀² across that setup.
+build step), live at <https://jaridpiceu.github.io/TACO-BELL/>. It lets you
+pick a model/symmetry/algorithm, type in μ₀²/λ, and see the matched run's
+central charge and scaling-dimension sectors — plus an iteration slider
+(defaulting to the plateau, like `plateau_central_charge`), a *c* vs
+iteration chart, a lowest-Δ-vs-iteration chart, and a phase-diagram chart
+of *c* vs μ₀² across that setup.
 
-It reads two things: a lightweight index (params + plateau *c* for every
-run) and, per run, a detail file with the full iteration-by-iteration
-trajectory. The index loads up front; a run's detail file is only fetched
-once you've actually matched that run, so the page stays fast even with
-thousands of runs in the database.
+It reads `web/data/index.json` (every run's parameters and plateau *c*,
+column-wise) up front, and fetches one run's trajectory
+(`web/data/runs/<id>.bin`, ~10 KB: zlib-compressed, scaling dimensions
+rounded to the 4 decimals the page displays) only once that run is matched.
+Both are written by [`export_web`](src/webexport.jl), which also documents
+the binary format.
 
-Regenerate both after adding new runs, before sharing the page:
-
-```
-julia --project=. scripts/update_web.jl
-```
-
-then commit the changed files under `web/data/`.
-
-To view it locally, **serve** the `web/` folder rather than double-clicking
-`index.html` — browsers block a page's own `fetch()` of a local file opened
-via `file://`. In VS Code, the simplest way is the "Live Server" extension:
-right-click `web/index.html` → *Open with Live Server*. Without VS Code, any
-static file server works, e.g. `python -m http.server 8000` from inside
-`web/`, then open `http://localhost:8000`.
-
-### Putting the Explorer online
-
-#### Option A: GitHub Pages (repo must be public)
-
+**Deployment is automatic:**
 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml)
-does the whole thing automatically: on every push that touches `db/**` (or
-`web/index.html`, or on a manual trigger), it installs Julia, runs
-`scripts/update_web.jl` to regenerate `web/data/` fresh, and deploys `web/`
-to GitHub Pages — so `web/data/runs/` never needs to be committed (see
-[Repo size](#repo-size-what-is-and-isnt-committed) above) and the live site
-is always in sync with `db/`. Runs on GitHub's free tier — Actions minutes
-are unlimited for public repos.
+runs on every push to `main` that touches `db/`, `src/`, `web/index.html`
+or the export script: it installs Julia, runs `scripts/update_web.jl` to
+regenerate `web/data/` from `db/shards/`, and deploys `web/` to GitHub
+Pages. You can also trigger it by hand from the *Actions* tab.
 
-Two one-time steps in GitHub's web UI, which only you can do:
-
-1. **Settings → General → Danger Zone → Change visibility → Make public.**
-   This is the real, hard-to-fully-reverse step — once public, anything
-   already pushed can be cloned/cached elsewhere even if you flip it back
-   later. Everything in this repo (the whole CFT database) becomes public
-   at this point, not just the Explorer.
-2. **Settings → Pages → Build and deployment → Source: "GitHub Actions"**
-   (not "Deploy from a branch").
-
-After that, push to `main` (or run the workflow manually from the *Actions*
-tab) and the site appears at `https://<your-username>.github.io/TACO-BELL/`
-within a few minutes — check the *Actions* tab for progress/errors.
-
-#### Option B: Netlify (repo stays private)
-
-If you'd rather not make the repo public, a static-site host like
-**Netlify** (or Vercel, Cloudflare Pages) gives a public URL from private
-content — repo access and site access are unrelated there. It can't watch
-your git repo for `db/` changes the way the Pages workflow does (nothing to
-connect to, since the data isn't committed), so it's a manual step instead
-of automatic:
+To preview the page locally, generate the data and **serve** the `web/`
+folder (browsers block `fetch()` from pages opened via `file://`):
 
 ```
 julia --project=. scripts/update_web.jl
+cd web && python -m http.server 8000      # then open http://localhost:8000
 ```
 
-then either drag the `web/` folder onto
-[app.netlify.com/drop](https://app.netlify.com/drop) (no account needed for
-a one-off; sign up to keep the same URL across updates), or, for a
-repeatable command, install the Netlify CLI once and run
-`netlify deploy --dir=web --prod` (it reads [`netlify.toml`](netlify.toml)
-for the same directory if you omit `--dir`). Re-run both commands whenever
-you want the live site to reflect new data.
-
-Either option makes the **data** public to anyone with the URL. For Option
-A that's true by construction (the whole repo is public); for Option B
-it's worth being explicit about even though the repo itself stays private —
-the data is out regardless of which one you pick.
+(or right-click `web/index.html` → *Open with Live Server* in VS Code).
 
 ### Old-format ingestion (pre-TNRKit v0.5)
 
@@ -448,39 +440,31 @@ parsing.
 
 ### Sharing results / contributing
 
-Because every run is a single TOML file, contributing a new result is a
-small, self-contained pull request:
+Contributing new results is a small, self-contained pull request:
 
-1. Ingest your run locally so a new `db/runs/<uuid>.toml` and an updated
-   `db/index.toml` are created.
-2. Regenerate the catalog and commit all three files:
+1. Ingest your runs locally (`ingest_directory!`, `ingest_jld2!`, …). This
+   adds new file(s) under `db/shards/` and leaves every existing file alone.
+2. Regenerate the catalog (automatic after `ingest_directory!`) and commit:
 
 ```julia
 generate_catalog()
 ```
 ```
-git add db/runs/<uuid>.toml db/index.toml db/CATALOG.md
-git commit -m "Add run: <short description>"
+git add db/shards db/CATALOG.md
+git commit -m "Add runs: <short description>"
 ```
 
-3. If your branch was based on an older `main` and other runs were merged
-   in the meantime, resolve any conflict by regenerating instead of
-   hand-editing the diff, then re-commit:
+3. Push to a branch and open a pull request against `main`. Two branches
+   that both add data never conflict on the shards themselves (they're new
+   files with unique names); if `db/CATALOG.md` conflicts, run
+   `generate_catalog()` again after merging and commit the result.
 
-```julia
-rebuild_index!()
-generate_catalog()
-```
+Once merged, the Explorer redeploys with the new data automatically.
 
-Individual `db/runs/*.toml` files never need manual edits or conflict
-resolution — they're independent by construction.
-
-If you also keep the [Explorer webpage](#the-explorer-webpage) up to date,
-regenerate and commit its exports too, alongside `generate_catalog()`:
-
-```
-julia --project=. scripts/update_web.jl
-```
+To import runs saved in the old one-TOML-file-per-run format (`db/runs/`
+before November 2026), use `import_toml_runs!("path/to/runs")`;
+[`scripts/migrate_toml_to_shards.jl`](scripts/migrate_toml_to_shards.jl)
+is the one-off migration that converted the existing database.
 
 ### JLD2 key layout
 
@@ -508,12 +492,13 @@ touches the real `db/` directory.
 [`.github/workflows/test.yml`](.github/workflows/test.yml) runs this same
 command automatically on every push to `main` and every pull request
 (against both the oldest Julia version this package claims to support and
-the latest stable one), so a broken change shows up as a red ✗ before it
-reaches `main` rather than being discovered later. That alone doesn't stop
-anyone from merging a red PR, though — to actually *require* it, add it as
-a required check in GitHub's branch protection settings: Settings →
-Branches → edit the `main` rule → "Require status checks to pass before
-merging" → select `test`.
+the latest stable one), and reports the combined result as a single check
+named `test` — the check the `protect-main` ruleset requires before a pull
+request can be merged.
+
+All workflow actions are pinned to full commit SHAs;
+[Dependabot](.github/dependabot.yml) opens weekly pull requests to bump
+them (and the Julia compat bounds).
 
 ## License
 
@@ -526,5 +511,6 @@ Split, since this repo is both a package and a dataset:
 ## Roadmap
 
 - [ ] TNRKit callback hook: `insert_run!` triggered automatically at convergence
-- [ ] Actually deploy the Explorer webpage (Netlify/Vercel/Cloudflare Pages — see [Putting the Explorer online](#putting-the-explorer-online--public-site-private-repo))
+- [x] Deploy the Explorer webpage ([GitHub Pages](https://jaridpiceu.github.io/TACO-BELL/))
+- [x] Compact, append-only storage (HDF5 shards)
 - [ ] `diff_runs(id1, id2)` to compare two parameter sets side by side

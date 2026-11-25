@@ -11,19 +11,25 @@ calculations, designed for use alongside
 See the package README for a full walkthrough. The core entry points are
 [`insert_run!`](@ref)/[`ingest_jld2!`](@ref)/[`ingest_directory!`](@ref) (add
 data), [`query_runs`](@ref)/[`find_closest`](@ref) (look it up), and
-[`export_csv`](@ref)/[`generate_catalog`](@ref) (get it out again, as a CSV
-file or as a Markdown table for browsing on GitHub).
+[`export_csv`](@ref)/[`export_web`](@ref)/[`generate_catalog`](@ref) (get it
+out again, as a CSV file, as data for the Explorer webpage, or as a Markdown
+summary for browsing on GitHub).
+
+Data lives in append-only, compressed, columnar HDF5 shard files under
+`db/shards/` — see `src/storage.jl` for the exact layout.
 """
 module TACOBELL
 
 using TOML, UUIDs, Dates, Printf, Statistics
 using HDF5
 using Plots
+import Zlib_jll
 
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
-export insert_run!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
+export insert_run!, insert_runs!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
 export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!, correct_field!
 export ingest_jld2!, ingest_directory!, generate_catalog, export_csv, export_json, export_json_runs
+export export_web, compact!, import_toml_runs!
 export ingest_jld2_old!, ingest_directory_old!
 export central_charge_trajectory, plateau_estimate, plateau_central_charge
 export plot_central_charge
@@ -189,14 +195,18 @@ function Base.show(io::IO, e::DatabaseEntry)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Serialisation helpers
+# Storage (see src/storage.jl for the on-disk shard format)
 # ─────────────────────────────────────────────────────────────────────────────
 
 DB_PATH() = joinpath(@__DIR__, "..", "db")
 
-function _sector_to_dict(sec::ScalingDimSector)
-    Dict("charge" => sec.charge, "dims" => sec.dims)
-end
+include("storage.jl")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Legacy TOML readers — the database used to be one TOML file per run
+# (db/runs/<uuid>.toml). Kept only so old run files can still be imported
+# with `import_toml_runs!`.
+# ─────────────────────────────────────────────────────────────────────────────
 
 function _sector_from_dict(d)
     if haskey(d, "charge")
@@ -208,17 +218,6 @@ function _sector_from_dict(d)
     ScalingDimSector(charge=charge, dims=Float64.(d["dims"]))
 end
 
-function _results_to_dict(r::CFTResults)
-    d = Dict{String,Any}(
-        "iteration"     => r.iteration,
-        "notes"         => r.notes,
-        "sectors"       => [_sector_to_dict(s) for s in r.sectors],
-    )
-    r.central_charge === missing || (d["central_charge"] = r.central_charge)
-    r.normalization  === missing || (d["normalization"]  = r.normalization)
-    d
-end
-
 function _results_from_dict(d)
     CFTResults(
         iteration       = d["iteration"],
@@ -226,18 +225,6 @@ function _results_from_dict(d)
         central_charge  = get(d, "central_charge",  missing),
         sectors         = [_sector_from_dict(s) for s in get(d, "sectors", [])],
         notes           = get(d, "notes", ""),
-    )
-end
-
-function _params_to_dict(p::RunParameters)
-    Dict(
-        "model"     => p.model,
-        "symmetry"  => p.symmetry,
-        "algorithm" => p.algorithm,
-        "chi"       => p.chi,
-        "K"         => p.K,
-        "mu0_sq"    => p.mu0_sq,
-        "lambda"    => p.lambda,
     )
 end
 
@@ -253,18 +240,6 @@ function _params_from_dict(d)
     )
 end
 
-function _entry_to_dict(e::DatabaseEntry)
-    d = Dict{String,Any}(
-        "id"          => e.id,
-        "created_at"  => e.created_at,
-        "source_file" => e.source_file,
-        "params"      => _params_to_dict(e.params),
-        "iterations"  => [_results_to_dict(r) for r in e.iterations],
-    )
-    e.runtime_s === missing || (d["runtime_s"] = e.runtime_s)
-    d
-end
-
 function _entry_from_dict(d)
     DatabaseEntry(
         id          = d["id"],
@@ -276,25 +251,6 @@ function _entry_from_dict(d)
     )
 end
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Index helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-_index_path(db_path=DB_PATH()) = joinpath(db_path, "index.toml")
-
-function _load_index(db_path=DB_PATH())
-    path = _index_path(db_path)
-    isfile(path) || return Dict{String,Any}[]
-    get(TOML.parsefile(path), "entry", Dict{String,Any}[])
-end
-
-function _save_index(entries, db_path=DB_PATH())
-    mkpath(db_path)
-    open(_index_path(db_path), "w") do io
-        TOML.print(io, Dict("entry" => entries))
-    end
-end
-
 function _best_c(iters::Vector{CFTResults})
     # The literal last iteration can be numerically unstable (finite-χ
     # truncation error compounding under the RG flow), so use the flattest
@@ -304,26 +260,44 @@ function _best_c(iters::Vector{CFTResults})
     return plateau_estimate(traj).value
 end
 
-function _index_row(e::DatabaseEntry)
-    p = e.params
-    Dict(
-        "id"             => e.id,
-        "created_at"     => e.created_at,
-        "model"          => p.model,
-        "symmetry"       => p.symmetry,
-        "algorithm"      => p.algorithm,
-        "chi"            => p.chi,
-        "K"              => p.K,
-        "mu0_sq"         => p.mu0_sq,
-        "lambda"         => p.lambda,
-        "n_iterations"   => length(e.iterations),
-        "central_charge" => _best_c(e.iterations),
-    )
-end
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API — writing
 # ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    insert_runs!(entries::Vector{DatabaseEntry}; db_path, allow_duplicate=false)
+
+Insert many entries at once, written together as new shard file(s) under
+`db/shards/` (split over several files if larger than
+[`TACOBELL.SHARD_MAX_DIMS`](@ref)). This is the fast path for bulk data —
+one write per batch rather than one per run. Existing shards are never
+modified. Returns `entries`.
+
+Raises an error (and writes nothing) if any entry has the same parameter set
+as a run already in the database or earlier in `entries`, unless
+`allow_duplicate=true`.
+"""
+function insert_runs!(
+        entries :: Vector{DatabaseEntry};
+        db_path :: String = DB_PATH(),
+        allow_duplicate :: Bool = false,
+    )
+    isempty(entries) && return entries
+    if !allow_duplicate
+        seen = _existing_keys(db_path)
+        for e in entries
+            k = _param_key(e.params)
+            haskey(seen, k) && error(
+                "Duplicate: entry $(seen[k]) has identical parameters to $(e.params). " *
+                "Pass allow_duplicate=true to insert anyway.")
+            seen[k] = e.id
+        end
+    end
+    for chunk in _chunk_by_dims(entries)
+        _write_shard(_new_shard_path(db_path), chunk)
+    end
+    return entries
+end
 
 """
     insert_run!(params, iterations; db_path, allow_duplicate, source_file, runtime_s)
@@ -333,6 +307,10 @@ Returns the created `DatabaseEntry`.
 
 Raises an error if an identical parameter set is already in the database,
 unless `allow_duplicate=true`.
+
+Each call writes one small shard file; when adding many runs, collect them
+and use [`insert_runs!`](@ref) (or [`ingest_directory!`](@ref)) instead, or
+merge small shards afterwards with [`compact!`](@ref).
 """
 function insert_run!(
         params      :: RunParameters,
@@ -342,31 +320,13 @@ function insert_run!(
         source_file :: String             = "",
         runtime_s   :: Union{Float64,Missing} = missing,
     )
-    if !allow_duplicate
-        existing = query_runs(params; db_path)
-        isempty(existing) || error(
-            "Duplicate: entry $(existing[1].id) has identical parameters. " *
-            "Pass allow_duplicate=true to insert anyway."
-        )
-    end
-
     entry = DatabaseEntry(
         params       = params,
         iterations   = iterations,
         source_file  = source_file,
         runtime_s    = runtime_s,
     )
-
-    run_dir = joinpath(db_path, "runs")
-    mkpath(run_dir)
-    open(joinpath(run_dir, entry.id * ".toml"), "w") do io
-        TOML.print(io, _entry_to_dict(entry))
-    end
-
-    idx = _load_index(db_path)
-    push!(idx, _index_row(entry))
-    _save_index(idx, db_path)
-
+    insert_runs!([entry]; db_path, allow_duplicate)
     @info "Inserted run $(entry.id) ($(length(iterations)) iterations)"
     return entry
 end
@@ -410,10 +370,7 @@ function ingest_jld2!(
         db_path  :: String  = DB_PATH(),
         allow_duplicate :: Bool = false,
     )
-    params = RunParameters(
-        model=String(model), symmetry=String(symmetry), algorithm=String(algorithm),
-        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
-    )
+    params = _blank_params(model; symmetry, algorithm)
     ingest_jld2!(filepath, params; db_path, allow_duplicate)
 end
 
@@ -423,6 +380,20 @@ function ingest_jld2!(
         db_path  :: String  = DB_PATH(),
         allow_duplicate :: Bool = false,
     )
+    entry = _read_jld2(filepath, params)
+    insert_runs!([entry]; db_path, allow_duplicate)
+    @info "Inserted run $(entry.id) ($(length(entry.iterations)) iterations)"
+    return entry
+end
+
+# Placeholder parameters: everything except model (and, for old files,
+# symmetry/algorithm) is overwritten from the file itself.
+_blank_params(model::AbstractString; symmetry::AbstractString = "", algorithm::AbstractString = "") =
+    RunParameters(model = String(model), symmetry = String(symmetry), algorithm = String(algorithm),
+                  chi = 0, K = 0, mu0_sq = 0.0, lambda = 0.0)
+
+"""Read a current-format TNRKit JLD2 file into a `DatabaseEntry` (not inserted)."""
+function _read_jld2(filepath::String, params::RunParameters)
     HDF5.h5open(filepath, "r") do f
         chi    = Int(HDF5.read(f["chi"]))
         K      = Int(HDF5.read(f["K"]))
@@ -474,10 +445,8 @@ function ingest_jld2!(
             ))
         end
 
-        insert_run!(filled_params, iters;
-                    db_path, allow_duplicate,
-                    source_file=basename(filepath),
-                    runtime_s=t)
+        DatabaseEntry(params = filled_params, iterations = iters,
+                      source_file = basename(filepath), runtime_s = t)
     end
 end
 
@@ -568,14 +537,18 @@ function ingest_directory!(
         extension   :: String  = ".jld2",
         allow_duplicate :: Bool = false,
     )
-    _ingest_directory_generic!(ingest_jld2!, dir; infer_params, db_path, extension, allow_duplicate)
+    reader(fp, p::RunParameters) = _read_jld2(fp, p)
+    reader(fp, model::AbstractString) = _read_jld2(fp, _blank_params(model))
+    _ingest_directory_generic!(reader, dir; infer_params, db_path, extension, allow_duplicate)
 end
 
 # Shared resilience loop behind ingest_directory!/ingest_directory_old! — the
-# only thing that differs between the two is which single-file function
-# ingests each match, so it's a parameter rather than duplicated code.
+# only thing that differs between the two is how a single file is read, so
+# it's a parameter rather than duplicated code. Files are read one by one but
+# written in bulk: runs are buffered and flushed as whole shards, so ingesting
+# thousands of files costs a handful of writes, not one index rewrite per file.
 function _ingest_directory_generic!(
-        ingest_fn, dir :: String;
+        read_fn, dir :: String;
         infer_params,
         db_path     :: String  = DB_PATH(),
         extension   :: String  = ".jld2",
@@ -590,24 +563,35 @@ function _ingest_directory_generic!(
     sort!(files)
     isempty(files) && @warn "No *$(extension) files found under $dir"
 
+    seen = _existing_keys(db_path)
+    buffer = DatabaseEntry[]; buffered_dims = 0
+    flush!() = (insert_runs!(buffer; db_path, allow_duplicate = true); empty!(buffer); buffered_dims = 0)
+
     n_ok = n_skip = n_err = 0
     for (i, filepath) in enumerate(files)
         label = "[$i/$(length(files))] $(basename(filepath))"
         try
-            params = infer_params(filepath)
-            ingest_fn(filepath, params; db_path, allow_duplicate)
-            n_ok += 1
-            @info "$label -> inserted"
-        catch err
-            if err isa ErrorException && startswith(err.msg, "Duplicate:")
+            entry = read_fn(filepath, infer_params(filepath))
+            k = _param_key(entry.params)
+            if !allow_duplicate && haskey(seen, k)
                 n_skip += 1
-                @info "$label -> skipped (already in db)"
-            else
-                n_err += 1
-                @warn "$label -> FAILED" exception=(err, catch_backtrace())
+                @info "$label -> skipped (already in db as $(seen[k]))"
+                continue
             end
+            seen[k] = entry.id
+            k_dims = _ndims_total(entry)
+            # flush *before* overflowing, so every shard ends up full-sized
+            !isempty(buffer) && buffered_dims + k_dims > SHARD_MAX_DIMS[] && flush!()
+            push!(buffer, entry)
+            buffered_dims += k_dims
+            n_ok += 1
+            @info "$label -> read"
+        catch err
+            n_err += 1
+            @warn "$label -> FAILED" exception=(err, catch_backtrace())
         end
     end
+    isempty(buffer) || flush!()
 
     n_ok > 0 && generate_catalog(; db_path)
 
@@ -660,10 +644,7 @@ function ingest_jld2_old!(
         db_path  :: String  = DB_PATH(),
         allow_duplicate :: Bool = false,
     )
-    params = RunParameters(
-        model=String(model), symmetry=String(symmetry), algorithm=String(algorithm),
-        chi=0, K=0, mu0_sq=0.0, lambda=0.0,
-    )
+    params = _blank_params(model; symmetry, algorithm)
     ingest_jld2_old!(filepath, params; db_path, allow_duplicate)
 end
 
@@ -673,6 +654,14 @@ function ingest_jld2_old!(
         db_path  :: String  = DB_PATH(),
         allow_duplicate :: Bool = false,
     )
+    entry = _read_jld2_old(filepath, params)
+    insert_runs!([entry]; db_path, allow_duplicate)
+    @info "Inserted run $(entry.id) ($(length(entry.iterations)) iterations)"
+    return entry
+end
+
+"""Read a pre-TNRKit-v0.5 JLD2 file into a `DatabaseEntry` (not inserted)."""
+function _read_jld2_old(filepath::String, params::RunParameters)
     HDF5.h5open(filepath, "r") do f
         chi    = Int(HDF5.read(f["ndimtrunc"]))
         K      = Int(HDF5.read(f["K"]))
@@ -702,10 +691,8 @@ function ingest_jld2_old!(
             ))
         end
 
-        insert_run!(filled_params, iters;
-                    db_path, allow_duplicate,
-                    source_file=basename(filepath),
-                    runtime_s=t)
+        DatabaseEntry(params = filled_params, iterations = iters,
+                      source_file = basename(filepath), runtime_s = t)
     end
 end
 
@@ -758,7 +745,11 @@ function ingest_directory_old!(
         extension   :: String  = ".jld2",
         allow_duplicate :: Bool = false,
     )
-    _ingest_directory_generic!(ingest_jld2_old!, dir; infer_params, db_path, extension, allow_duplicate)
+    reader(fp, p::RunParameters) = _read_jld2_old(fp, p)
+    reader(fp, ::AbstractString) = throw(ArgumentError(
+        "old-format files never store symmetry/algorithm: infer_params must return a full " *
+        "RunParameters with both set, not just a model name (see ingest_jld2_old!)"))
+    _ingest_directory_generic!(reader, dir; infer_params, db_path, extension, allow_duplicate)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -771,9 +762,10 @@ end
 Load a single entry by its UUID string.
 """
 function load_entry(id::String; db_path::String = DB_PATH())
-    path = joinpath(db_path, "runs", id * ".toml")
-    isfile(path) || error("No entry with id=$id")
-    _entry_from_dict(TOML.parsefile(path))
+    idx = _load_index(db_path)
+    i = findfirst(r -> r["id"] == id, idx)
+    i === nothing && error("No entry with id=$id")
+    return only(_read_entries(idx[i]["_shard"], [idx[i]["_row"]]))
 end
 
 """
@@ -807,8 +799,14 @@ function query_runs(
         mu0_sq_tol :: Float64                 = 1e-10,
         lambda_tol :: Float64                 = 1e-10,
     )
-    idx = _load_index(db_path)
-    hits = filter(idx) do row
+    _entries_for_rows(_query_rows(; db_path, model, symmetry, algorithm, chi, K,
+                                    mu0_sq, lambda, mu0_sq_tol, lambda_tol))
+end
+
+function _query_rows(; db_path = DB_PATH(), model = nothing, symmetry = nothing, algorithm = nothing,
+                     chi = nothing, K = nothing, mu0_sq = nothing, lambda = nothing,
+                     mu0_sq_tol = 1e-10, lambda_tol = 1e-10)
+    filter(_load_index(db_path)) do row
         (isnothing(model)     || row["model"]     == model)     &&
         (isnothing(symmetry)  || row["symmetry"]  == symmetry)  &&
         (isnothing(algorithm) || row["algorithm"] == algorithm) &&
@@ -817,7 +815,6 @@ function query_runs(
         (isnothing(mu0_sq)    || abs(row["mu0_sq"] - mu0_sq) < mu0_sq_tol) &&
         (isnothing(lambda)    || abs(row["lambda"] - lambda)  < lambda_tol)
     end
-    [load_entry(row["id"]; db_path) for row in hits]
 end
 
 # Convenience: pass RunParameters directly
@@ -999,43 +996,108 @@ function find_closest(
         model=nothing, symmetry=nothing, algorithm=nothing,
         chi=nothing, K=nothing, db_path=DB_PATH(),
     )
-    cands = query_runs(; db_path, model, symmetry, algorithm, chi, K)
-    isempty(cands) && return nothing
-    dist(e) = (e.params.mu0_sq - mu0_sq)^2 + (e.params.lambda - lambda)^2
-    cands[argmin(dist.(cands))]
+    rows = _query_rows(; db_path, model, symmetry, algorithm, chi, K)
+    isempty(rows) && return nothing
+    dist(r) = (r["mu0_sq"] - mu0_sq)^2 + (r["lambda"] - lambda)^2
+    return only(_entries_for_rows([rows[argmin(dist.(rows))]]))
 end
 
 """
-    rebuild_index!(; db_path)
+    rebuild_index!(; db_path) -> Int
 
-Rebuild `index.toml` by scanning all run files.
-Run this after merging a pull request that adds run files without updating the index.
+The run index is derived from the shard files on the fly and cached in
+memory (nothing is stored on disk, so it can never go stale or conflict in
+a merge). This drops that cache and re-reads every shard — only needed if
+shard files were changed in a way their modification time doesn't reflect.
+Returns the number of runs.
 """
 function rebuild_index!(; db_path::String = DB_PATH())
-    run_dir = joinpath(db_path, "runs")
-    isdir(run_dir) || return
-    idx = Dict{String,Any}[]
-    for f in readdir(run_dir, join=true)
-        endswith(f, ".toml") || continue
-        try
-            e = _entry_from_dict(TOML.parsefile(f))
-            push!(idx, _index_row(e))
-        catch err
-            @warn "Skipping $f: $err"
-        end
+    lock(_CACHE_LOCK) do
+        empty!(_META_CACHE)
+        empty!(_DETAIL_CACHE)
     end
-    _save_index(idx, db_path)
-    @info "Rebuilt index: $(length(idx)) entries"
+    n = length(_load_index(db_path))
+    @info "Rebuilt index: $n entries"
+    return n
+end
+
+"""
+    compact!(; db_path, max_dims=TACOBELL.SHARD_MAX_DIMS[]) -> Int
+
+Merge small shard files (e.g. left behind by many single [`insert_run!`](@ref)
+calls) into as few full-size shards as possible. Shards that are already at
+least half full are left alone. Returns the number of shard files removed.
+
+Unlike every other write, this *replaces* existing files, so git stores the
+merged data again — run it occasionally, not after every insert.
+"""
+function compact!(; db_path::String = DB_PATH(), max_dims::Int = SHARD_MAX_DIMS[])
+    removed = 0
+    groups = Dict{DataType,Vector{String}}()
+    for path in _shard_files(db_path)
+        n = h5open(f -> length(f["dims"]), path, "r")
+        n < max_dims ÷ 2 && push!(get!(groups, _shard_dims_type(path), String[]), path)
+    end
+    for (T, paths) in groups
+        length(paths) < 2 && continue
+        entries = reduce(vcat, (_read_shard(p) for p in paths))
+        for chunk in _chunk_by_dims(entries; max_dims)
+            _write_shard(_new_shard_path(db_path), chunk; dims_type = T)
+        end
+        foreach(rm, paths)
+        removed += length(paths)
+    end
+    @info "compact!: merged $removed small shard(s)"
+    return removed
+end
+
+"""
+    import_toml_runs!(dir_or_files; db_path, allow_duplicate=false) -> Int
+
+Import runs stored in the old one-TOML-file-per-run format (`<uuid>.toml`
+files, as in `db/runs/` before the switch to HDF5 shards), keeping their ids
+and creation dates. Pass a directory, or a vector of file paths to control
+the order runs are grouped into shards. Runs whose parameters are already
+in the database are skipped. Files are streamed in bulk, so memory use
+stays bounded. Returns the number of runs imported.
+"""
+import_toml_runs!(dir::String; kwargs...) =
+    import_toml_runs!(sort!(filter(f -> endswith(f, ".toml"), readdir(dir; join = true))); kwargs...)
+
+function import_toml_runs!(files::Vector{String}; db_path::String = DB_PATH(), allow_duplicate::Bool = false)
+    seen = _existing_keys(db_path)
+    buffer = DatabaseEntry[]; nd = 0; n = 0
+    for (i, f) in enumerate(files)
+        e = _entry_from_dict(TOML.parsefile(f))
+        k = _param_key(e.params)
+        if !allow_duplicate && haskey(seen, k)
+            @warn "Skipping $(basename(f)): same parameters as $(seen[k])"
+            continue
+        end
+        seen[k] = e.id
+        k_dims = _ndims_total(e)
+        # flush *before* overflowing, so every shard ends up full-sized
+        if !isempty(buffer) && nd + k_dims > SHARD_MAX_DIMS[]
+            insert_runs!(buffer; db_path, allow_duplicate = true)
+            empty!(buffer); nd = 0
+        end
+        push!(buffer, e); nd += k_dims; n += 1
+        i % 1000 == 0 && @info "import_toml_runs!: $i / $(length(files)) files read"
+    end
+    insert_runs!(buffer; db_path, allow_duplicate = true)
+    @info "Imported $n run(s) from $(length(files)) file(s)"
+    return n
 end
 
 """
     correct_field!(field, old, new; db_path) -> Int
 
 Fix a typo (or rename a value) in one `RunParameters` field across every
-matching entry already in the database, in place — same `id`, same file,
-only that field changes. `field` is `:model`, `:symmetry`, or `:algorithm`.
-Rebuilds `index.toml` and regenerates `db/CATALOG.md` afterward if anything
-changed. Returns the number of entries fixed.
+matching entry already in the database, in place — same `id`, only that
+field changes. `field` is `:model`, `:symmetry`, or `:algorithm`. The shard
+files holding affected runs are rewritten (keeping their scaling-dimension
+precision); `db/CATALOG.md` is regenerated afterward if anything changed.
+Returns the number of entries fixed.
 
 # Example
 ```julia
@@ -1047,27 +1109,25 @@ function correct_field!(field::Symbol, old, new; db_path::String = DB_PATH())
         error("correct_field! only supports :model, :symmetry, or :algorithm, got :$field")
 
     n = 0
-    for row in _load_index(db_path)
-        row[String(field)] == old || continue
-        entry = load_entry(row["id"]; db_path)
-        fixed_params = RunParameters(;
-            (k => (k === field ? new : getfield(entry.params, k))
-             for k in fieldnames(RunParameters))...
-        )
-        fixed_entry = DatabaseEntry(;
-            id=entry.id, created_at=entry.created_at, source_file=entry.source_file,
-            runtime_s=entry.runtime_s, params=fixed_params, iterations=entry.iterations,
-        )
-        open(joinpath(db_path, "runs", entry.id * ".toml"), "w") do io
-            TOML.print(io, _entry_to_dict(fixed_entry))
+    affected = unique(row["_shard"] for row in _load_index(db_path) if row[String(field)] == old)
+    for path in affected
+        T = _shard_dims_type(path)
+        entries = map(_read_shard(path)) do entry
+            getfield(entry.params, field) == old || return entry
+            n += 1
+            fixed_params = RunParameters(;
+                (k => (k === field ? new : getfield(entry.params, k))
+                 for k in fieldnames(RunParameters))...
+            )
+            DatabaseEntry(;
+                id=entry.id, created_at=entry.created_at, source_file=entry.source_file,
+                runtime_s=entry.runtime_s, params=fixed_params, iterations=entry.iterations,
+            )
         end
-        n += 1
+        _write_shard(path, entries; dims_type = T)
     end
 
-    if n > 0
-        rebuild_index!(; db_path)
-        generate_catalog(; db_path)
-    end
+    n > 0 && generate_catalog(; db_path)
     @info "correct_field!" field old new fixed=n
     return n
 end
@@ -1211,12 +1271,10 @@ _to_json(x::Union{AbstractVector, Tuple}) = "[" * join((_to_json(v) for v in x),
 Write a lightweight **index** of the database to a single JSON file: one
 object per run with its parameters and (plateau-based) central charge, but
 not its per-iteration trajectory or sectors — see the `DatabaseEntry`
-method below for that. This is what feeds the static "browse the database"
-webpage's search/matching (see `web/` in the repository), which then fetches
-a matched run's full detail lazily; it's also just a portable,
-language-agnostic snapshot for any other tool to consume. Pass a filtered
-result from [`query_runs`](@ref) to export just a selection. Returns the
-path written.
+method below for that. A portable, language-agnostic snapshot for any other
+tool to consume (the Explorer webpage uses the more compact
+[`export_web`](@ref) instead). Pass a filtered result from
+[`query_runs`](@ref) to export just a selection. Returns the path written.
 """
 function export_json(entries::Vector{DatabaseEntry} = query_runs(); out::String = "tacobell_export.json")
     runs = map(entries) do e
@@ -1239,10 +1297,9 @@ end
 
 Write one run's full per-iteration **detail** — normalization, central
 charge, and every populated sector's scaling dimensions, at every stored
-iteration — to a single JSON file. This is the counterpart to the index
-written by the `Vector{DatabaseEntry}` method: the webpage fetches one of
-these lazily, only for the run it actually matched, rather than loading
-every run's whole history up front. Returns the path written.
+iteration — to a single JSON file, at full precision. The counterpart to the
+index written by the `Vector{DatabaseEntry}` method. Returns the path
+written.
 """
 function export_json(entry::DatabaseEntry; out::String = entry.id * ".json")
     iters = [
@@ -1261,15 +1318,14 @@ function export_json(entry::DatabaseEntry; out::String = entry.id * ".json")
 end
 
 """
-    export_json_runs(entries=query_runs(); dir="web/data/runs") -> Int
+    export_json_runs(entries=query_runs(); dir="tacobell_runs_json") -> Int
 
 Write the per-run detail JSON (see [`export_json`](@ref)'s `DatabaseEntry`
-method) for every given entry into `dir`, one `<id>.json` per run. Pairs
-with `export_json(entries; out="web/data/tacobell.json")` to (re)build
-everything the Explorer webpage needs after adding new runs. Returns the
+method) for every given entry into `dir`, one `<id>.json` per run. Pass a
+filtered selection: the whole database as JSON is several GB. Returns the
 number of files written.
 """
-function export_json_runs(entries::Vector{DatabaseEntry} = query_runs(); dir::String = joinpath("web", "data", "runs"))
+function export_json_runs(entries::Vector{DatabaseEntry} = query_runs(); dir::String = "tacobell_runs_json")
     mkpath(dir)
     for e in entries
         export_json(e; out = joinpath(dir, e.id * ".json"))
@@ -1281,38 +1337,50 @@ end
 """
     generate_catalog(; db_path, out) -> String
 
-Write a Markdown table of every run in the database to `out`
-(default `<db_path>/CATALOG.md`). This is what renders directly on GitHub
-for anyone browsing the repository without Julia installed.
-
-Call this after [`insert_run!`](@ref) or [`ingest_jld2!`](@ref) and commit
-the resulting file alongside the new `db/runs/<uuid>.toml` and
-`db/index.toml`. Returns the path written.
+Write a Markdown overview of the database to `out` (default
+`<db_path>/CATALOG.md`): one row per setup (model, symmetry, algorithm, χ,
+K) with its number of runs, the λ values and μ₀² range covered. This is
+what renders directly on GitHub for anyone browsing the repository without
+Julia installed; for individual runs, use the Explorer webpage or
+[`query_runs`](@ref). Regenerated automatically by
+[`ingest_directory!`](@ref). Returns the path written.
 """
 function generate_catalog(; db_path::String = DB_PATH(), out::String = joinpath(db_path, "CATALOG.md"))
     idx = _load_index(db_path)
-    rows = sort(idx, by = r -> (r["model"], r["symmetry"], r["algorithm"], r["chi"], r["K"], r["mu0_sq"], r["lambda"]))
+    groups = Dict{Tuple,Vector{Dict{String,Any}}}()
+    for r in idx
+        push!(get!(groups, (r["model"], r["symmetry"], r["algorithm"], r["chi"], r["K"]), Dict{String,Any}[]), r)
+    end
+
+    fmt(x) = @sprintf("%g", x)
+    function lambdas(rs)
+        ls = sort(unique(r["lambda"] for r in rs))
+        length(ls) <= 6 ? join(fmt.(ls), ", ") : "$(length(ls)) values in [$(fmt(first(ls))), $(fmt(last(ls)))]"
+    end
 
     io = IOBuffer()
     println(io, "<!-- Auto-generated by `TACOBELL.generate_catalog()`. Do not edit by hand. -->")
     println(io)
     println(io, "# TACO-BELL catalog")
     println(io)
-    println(io, "$(length(rows)) run(s), last generated $(now()).")
+    println(io, "$(length(idx)) run(s) in $(length(groups)) setup(s), stored in ",
+                "$(length(_shard_files(db_path))) shard file(s) under `shards/`.")
     println(io)
-    println(io, "| ID | model | symmetry | algorithm | χ | K | μ₀² | λ | iterations | c |")
-    println(io, "|---|---|---|---|---|---|---|---|---|---|")
-    for row in rows
-        c = isnan(row["central_charge"]) ? "—" : @sprintf("%.4f", row["central_charge"])
-        println(io, @sprintf("| [%s](runs/%s.toml) | %s | %s | %s | %d | %d | %.4f | %.4f | %d | %s |",
-            row["id"][1:8], row["id"], row["model"], row["symmetry"], row["algorithm"],
-            row["chi"], row["K"], row["mu0_sq"], row["lambda"], row["n_iterations"], c))
+    println(io, "| model | symmetry | algorithm | χ | K | runs | λ | μ₀² range |")
+    println(io, "|---|---|---|---|---|---|---|---|")
+    for key in sort!(collect(keys(groups)))
+        rs = groups[key]
+        mus = [r["mu0_sq"] for r in rs]
+        println(io, "| ", join(string.(key), " | "), " | ", length(rs), " | ", lambdas(rs),
+                " | ", fmt(minimum(mus)), " … ", fmt(maximum(mus)), " |")
     end
 
     mkpath(dirname(out))
     write(out, String(take!(io)))
-    @info "Wrote catalog with $(length(rows)) entries to $out"
+    @info "Wrote catalog ($(length(groups)) setups, $(length(idx)) runs) to $out"
     return out
 end
+
+include("webexport.jl")
 
 end # module

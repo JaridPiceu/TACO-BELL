@@ -1,3 +1,6 @@
+permissions:
+  contents: read
+
 name: Deploy Explorer to GitHub Pages
 
 # web/data/runs/ (the Explorer's per-run detail) is deliberately not

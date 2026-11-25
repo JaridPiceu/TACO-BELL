@@ -14,7 +14,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 Zlib_jll = "83775a58-1f1d-513f-b197-d71354ab007a"
 
 [compat]
-Dates = "1"
+Dates = "<0.0.1, 1"
 HDF5 = "0.17"
 Plots = "1"
 Printf = "1"

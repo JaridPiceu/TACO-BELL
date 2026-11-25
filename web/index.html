@@ -72,49 +72,14 @@
     gap: 10px;
   }
   header.hero .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .logo {
-    position: relative; display: inline-block; font-size: 30px; line-height: 1;
-    transform-origin: top center; cursor: default;
-  }
+  .logo { position: relative; display: inline-block; font-size: 30px; line-height: 1; }
   .logo .logo-taco {
     position: absolute; left: 52%; top: 58%; font-size: 17px;
     transform: translate(-50%, 0) rotate(-10deg);
   }
-  .logo:hover, .brand:focus-within .logo { animation: bell-ring 0.6s ease; }
-  @keyframes bell-ring {
-    0%, 100% { transform: rotate(0deg); }
-    20% { transform: rotate(-14deg); }
-    40% { transform: rotate(11deg); }
-    60% { transform: rotate(-7deg); }
-    80% { transform: rotate(4deg); }
-  }
-  @media (prefers-reduced-motion: reduce) { .logo:hover, .brand:focus-within .logo { animation: none; } }
-  .like-btn {
-    margin-left: auto; display: flex; align-items: center; gap: 7px;
-    font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2);
-    background: var(--page); border: 1px solid var(--border); border-radius: 999px;
-    padding: 7px 14px; cursor: pointer;
-    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
-  }
-  .like-btn:hover { border-color: var(--series-2); color: var(--text); }
-  .like-btn:active { transform: scale(0.95); }
-  .like-btn:focus-visible { outline: 2px solid var(--series-2); outline-offset: 2px; }
-  .like-btn.liked { background: var(--series-2); border-color: var(--series-2); color: #fff; }
-  .like-btn .like-icon { font-size: 16px; line-height: 1; }
-  @media (max-width: 480px) { .like-btn .like-label { display: none; } }
-
-  .taco-particle {
-    position: fixed; font-size: 22px; pointer-events: none; z-index: 50; top: 0; left: 0;
-    animation-name: taco-fall; animation-timing-function: cubic-bezier(.35,.6,.6,1); animation-fill-mode: forwards;
-  }
-  @keyframes taco-fall {
-    0%   { transform: translate(0, 0) rotate(0deg); opacity: 1; }
-    100% { transform: translate(var(--dx), 320px) rotate(var(--rot)); opacity: 0; }
-  }
-  @media (prefers-reduced-motion: reduce) { .taco-particle { display: none; } }
   header.hero h1 {
-    font-size: 34px; margin: 0; letter-spacing: -0.02em; font-weight: 800;
-    color: var(--series-1);
+    font-size: 30px; margin: 0; letter-spacing: -0.02em; font-weight: 700;
+    color: var(--text);
   }
   header.hero .tag {
     font-family: var(--mono); font-size: 12px; font-weight: 600; text-transform: uppercase;
@@ -277,7 +242,6 @@
   footer a { color: var(--series-1); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
   footer .credit { color: var(--text-2); }
-  footer .pun { font-style: italic; opacity: 0.75; }
 
   [hidden] { display: none !important; }
 
@@ -305,11 +269,6 @@
       <span class="logo" aria-hidden="true">🔔<span class="logo-taco">🌮</span></span>
       <h1>TACO-BELL</h1>
       <span class="tag">Explorer</span>
-      <button class="like-btn" id="likeBtn" type="button" aria-pressed="false"
-              title="Saved in your browser only — not a shared count, just a fun little marker for you.">
-        <span class="like-icon">🌮</span>
-        <span class="like-label">Like this database</span>
-      </button>
     </div>
     <p class="full-name">Tensor Archive of Conformal Output — Best Ever Lattice Labour</p>
     <p class="lede">
@@ -436,7 +395,6 @@
       · vibe-coded with Claude 🤖
     </div>
     <div id="footer"></div>
-    <div class="pun" id="footerPun"></div>
   </footer>
 </div>
 
@@ -536,11 +494,65 @@
   }
 
   // ---------------------------------------------------------- data fetch
+  // data/index.json stores every run column-wise, with model/symmetry/
+  // algorithm as indices into small lookup lists; expand it to row objects.
+  function expandIndex(ix) {
+    var runs = new Array(ix.id.length);
+    for (var i = 0; i < ix.id.length; i++) {
+      runs[i] = {
+        id: ix.id[i],
+        model: ix.models[ix.model[i]], symmetry: ix.symmetries[ix.symmetry[i]], algorithm: ix.algorithms[ix.algorithm[i]],
+        chi: ix.chi[i], K: ix.K[i], mu0_sq: ix.mu0_sq[i], lambda: ix.lambda[i],
+        n_iterations: ix.n_iterations[i], central_charge: ix.central_charge[i],
+      };
+    }
+    return { generated_at: ix.generated_at, runs: runs };
+  }
+
+  // data/runs/<id>.bin: one run's trajectory, zlib-compressed binary.
+  // Format written by TACOBELL.export_web (see src/webexport.jl):
+  //   "TBW1" u32 nIter u32 nSec u32 nDims u32 labelsLen, labels JSON,
+  //   i32[nIter] iteration, f64[nIter] c (NaN = missing),
+  //   u16[nIter] sectors per iteration, u16[nSec] label, u16[nSec] dims count,
+  //   i32[nDims] round(Δ·1e4), delta-coded per sector, byte-shuffled.
+  function decodeRun(buf) {
+    var dv = new DataView(buf), bytes = new Uint8Array(buf);
+    if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== "TBW1") throw new Error("unknown run file format");
+    var nIter = dv.getUint32(4, true), nSec = dv.getUint32(8, true), nDims = dv.getUint32(12, true), nLab = dv.getUint32(16, true);
+    var labels = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + nLab)));
+    var o = 20 + nLab, i, k;
+    var iterNum = [], cc = [], secPerIter = [], lab = [], nd = [];
+    for (i = 0; i < nIter; i++, o += 4) iterNum.push(dv.getInt32(o, true));
+    for (i = 0; i < nIter; i++, o += 8) cc.push(dv.getFloat64(o, true));
+    for (i = 0; i < nIter; i++, o += 2) secPerIter.push(dv.getUint16(o, true));
+    for (i = 0; i < nSec; i++, o += 2) lab.push(dv.getUint16(o, true));
+    for (i = 0; i < nSec; i++, o += 2) nd.push(dv.getUint16(o, true));
+    // un-shuffle: byte b of value k sits at o + b·nDims + k
+    var q = new Int32Array(nDims);
+    for (k = 0; k < nDims; k++) {
+      q[k] = bytes[o + k] | (bytes[o + nDims + k] << 8) | (bytes[o + 2 * nDims + k] << 16) | (bytes[o + 3 * nDims + k] << 24);
+    }
+    var iterations = [], s = 0, d = 0;
+    for (i = 0; i < nIter; i++) {
+      var sectors = [];
+      for (var j = 0; j < secPerIter[i]; j++, s++) {
+        var dims = [], acc = 0;
+        for (k = 0; k < nd[s]; k++, d++) { acc += q[d]; dims.push(acc / 1e4); }
+        sectors.push({ charge: labels[lab[s]], dims: dims });
+      }
+      iterations.push({ iteration: iterNum[i], central_charge: Number.isNaN(cc[i]) ? null : cc[i], sectors: sectors });
+    }
+    return { iterations: iterations };
+  }
+
   function fetchDetail(id) {
     if (DETAIL_CACHE[id]) return Promise.resolve(DETAIL_CACHE[id]);
-    return fetch("data/runs/" + id + ".json")
-      .then(function (r) { return r.json(); })
-      .then(function (d) { DETAIL_CACHE[id] = d; return d; });
+    return fetch("data/runs/" + id + ".bin")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return new Response(r.body.pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
+      })
+      .then(function (buf) { var d = decodeRun(buf); DETAIL_CACHE[id] = d; return d; });
   }
 
   function currentFilters() {
@@ -980,13 +992,6 @@
     }, ms || 2200);
   }
 
-  function rickroll() {
-    tacoToast("🎵 Never gonna give this dataset up… 🎵", 1400);
-    setTimeout(function () {
-      window.open("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "_blank", "noopener");
-    }, 650);
-  }
-
   function initTacoEasterEgg() {
     var buffer = "";
     window.addEventListener("keydown", function (e) {
@@ -995,18 +1000,6 @@
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       buffer = (buffer + e.key).slice(-4).toLowerCase();
       if (buffer === "taco") { tacoRain(); buffer = ""; }
-      else if (buffer === "rick") { rickroll(); buffer = ""; }
-    });
-  }
-
-  // tab title teases you into coming back when you wander off
-  function initTabTease() {
-    var original = document.title;
-    var awayTitles = ["🔔 Order's getting cold…", "🌮 Still there?", "🔔 Ding! Data's ready.", "🌮 Don't leave it soggy…"];
-    document.addEventListener("visibilitychange", function () {
-      document.title = document.hidden
-        ? awayTitles[Math.floor(Math.random() * awayTitles.length)]
-        : original;
     });
   }
 
@@ -1021,22 +1014,11 @@
       "      '-.,,.-'",
       "",
       "Poking around in here? Respect. The raw data is one fetch away:",
-      "  data/tacobell.json  (index)   +   data/runs/<id>.json  (per-run trajectory)",
+      "  data/index.json  (all runs)   +   data/runs/<id>.bin  (per-run trajectory, see decodeRun)",
       "No API key, no rate limit, no backend to break. Have fun. 🌮",
     ].join("\n");
     try { console.log("%c" + art, "font-family:monospace; color:#eb6834; white-space:pre;"); } catch (e) { /* ignore */ }
   }
-
-  var FOOTER_PUNS = [
-    "Coarse-grained to a crisp.",
-    "χ marks the spot.",
-    "No backend — just well-seasoned data.",
-    "Served fresh off the RG flow.",
-    "This dataset has excellent taco-nomy.",
-    "Zero soggy shells, zero flaky measurements.",
-    "Renormalized, not fried (well — a little fried).",
-    "Every run fixed-point checked for crunch.",
-  ];
 
   // ----------------------------------------------------------------- init
   function init(data) {
@@ -1072,67 +1054,16 @@
     });
 
     $("footer").textContent = "Data exported from the TACO-BELL database (" + n + " runs, generated " + data.generated_at + "). No server — everything above runs in your browser.";
-    $("footerPun").textContent = FOOTER_PUNS[Math.floor(Math.random() * FOOTER_PUNS.length)];
 
     renderResult();
   }
 
   initTacoEasterEgg();
-  initTabTease();
   initConsoleEasterEgg();
 
-  // ---- fun gimmick: a taco-rain burst + a "like" that's just for you ----
-  // No backend on a static page, so this is honestly a per-browser toggle
-  // (localStorage), not a shared/global like count — the button says so.
-  function tacoBurst(originEl) {
-    var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) return;
-    var rect = originEl.getBoundingClientRect();
-    var n = 16;
-    for (var i = 0; i < n; i++) {
-      var span = document.createElement("span");
-      span.textContent = "🌮";
-      span.className = "taco-particle";
-      var dx = (Math.random() - 0.5) * 260;
-      var dur = 700 + Math.random() * 500;
-      var rot = (Math.random() - 0.5) * 720;
-      span.style.left = (rect.left + rect.width / 2) + "px";
-      span.style.top = (rect.top + rect.height / 2) + "px";
-      span.style.setProperty("--dx", dx + "px");
-      span.style.setProperty("--rot", rot + "deg");
-      span.style.animationDuration = dur + "ms";
-      document.body.appendChild(span);
-      (function (el, ms) { setTimeout(function () { el.remove(); }, ms + 50); })(span, dur);
-    }
-  }
-
-  function initLike() {
-    var LIKE_KEY = "tacobell_liked";
-    var btn = $("likeBtn");
-    if (!btn) return;
-    var label = btn.querySelector(".like-label");
-    var liked = false;
-    try { liked = localStorage.getItem(LIKE_KEY) === "1"; } catch (e) { /* private window etc. */ }
-
-    function render() {
-      btn.classList.toggle("liked", liked);
-      btn.setAttribute("aria-pressed", String(liked));
-      label.textContent = liked ? "Liked!" : "Like this database";
-    }
-    render();
-
-    btn.addEventListener("click", function () {
-      liked = !liked;
-      try { localStorage.setItem(LIKE_KEY, liked ? "1" : "0"); } catch (e) { /* ignore */ }
-      render();
-      if (liked) tacoBurst(btn);
-    });
-  }
-  initLike();
-
-  fetch("data/tacobell.json")
-    .then(function (r) { return r.json(); })
-    .then(init)
+  fetch("data/index.json")
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (ix) { init(expandIndex(ix)); })
     .catch(function (err) {
       $("headerStats").textContent = "failed to load database: " + err;
     });

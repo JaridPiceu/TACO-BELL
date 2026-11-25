@@ -1,10 +1,9 @@
 name: Deploy Explorer to GitHub Pages
 
-# web/data/runs/ (the Explorer's per-run detail) is deliberately not
-# committed — see .gitignore and the README's "Repo size" section. This
-# workflow regenerates it from db/ on every relevant push and deploys the
-# result, so GitHub Pages always serves fresh data without that ~350MB+
-# ever needing to live in git.
+# web/data/ (the Explorer's index + per-run files) is not committed — see
+# .gitignore. This workflow regenerates it from db/shards/ on every relevant
+# push and deploys the result, so the live site is always in sync with the
+# database.
 
 on:
   push:
@@ -13,14 +12,14 @@ on:
       - "db/**"
       - "web/index.html"
       - "src/**"
+      - "scripts/update_web.jl"
       - "Project.toml"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch: # lets you trigger a rebuild manually from the Actions tab
 
+# Least privilege by default; the deploy job alone gets Pages access.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Only one deploy at a time; a new push cancels a still-running older one.
 concurrency:
@@ -30,14 +29,19 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # lets julia-actions/cache prune its old caches
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
         with:
           version: "1.11"
 
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
 
       - name: Instantiate TACOBELL
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
@@ -45,18 +49,21 @@ jobs:
       - name: Regenerate web/data from db/
         run: julia --project=. scripts/update_web.jl
 
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: web
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

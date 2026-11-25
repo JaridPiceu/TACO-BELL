@@ -65,7 +65,7 @@ files from TNRKit
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-The tests run on every pull request (Julia 1.9 and latest) and must pass,
+The tests run on every pull request (Julia LTS 1.10 and latest) and must pass,
 as the required `test` check, before merging into `main`. All workflow
 actions are pinned to commit SHAs and kept up to date by Dependabot.
 

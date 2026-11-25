@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        julia-version: ["1.9", "1"] # oldest version this package claims to support, and latest stable
+        julia-version: ["lts", "1"] # long-term-support release (the oldest version supported) and latest stable
     steps:
       # Actions are pinned to full commit SHAs (supply-chain hardening);
       # Dependabot (.github/dependabot.yml) keeps them up to date.
@@ -44,7 +44,7 @@ jobs:
 
   # Single, stable status for branch protection: the `protect-main` ruleset
   # requires a check named exactly "test". Matrix jobs report as
-  # "julia 1.9" / "julia 1", so this job gathers them under that one name.
+  # "julia lts" / "julia 1", so this job gathers them under that one name.
   test:
     name: test
     if: always()

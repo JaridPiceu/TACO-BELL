@@ -72,6 +72,15 @@ window was found. For other trajectories (e.g. one Δ), use
 plateau value is what `summarize_db`, the catalog, CSV exports and the
 website show.
 
+**Partial runs.** Some runs stopped before their planned number of
+iterations (crash or time limit), sometimes after only a few steps, which
+is too short for a reliable plateau. They're kept, with a note on their last
+iteration. Leave them out with:
+
+```julia
+runs = filter(!is_partial, query_runs(symmetry="O(2)"))
+```
+
 ## Export
 
 ```julia

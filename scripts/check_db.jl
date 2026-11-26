@@ -30,6 +30,8 @@ isempty(leftovers) || problem("half-written shard file(s) left behind: $(join(le
 
 seen_ids = Dict{String,String}()
 seen_keys = Dict{Any,String}()
+seen_nomodel = Dict{Any,Tuple{String,String}}()
+same_but_model = Tuple{String,String}[]
 n_runs = 0; n_dims = 0
 no_dims = Dict{Tuple{String,String,String},Int}()
 
@@ -56,6 +58,16 @@ for path in shards
         k = TACOBELL._param_key(p)
         haskey(seen_keys, k) && problem("$what: same parameters as run $(seen_keys[k])")
         seen_keys[k] = e.id
+        # identical parameters *and* data, only the model name differs: the
+        # same run added twice under two spellings of one model
+        cs = [r.central_charge for r in e.iterations]
+        k_nomodel = (Base.tail(k), length(cs), isempty(cs) ? missing : first(cs), isempty(cs) ? missing : last(cs))
+        other = get(seen_nomodel, k_nomodel, nothing)
+        if other !== nothing && other[1] != p.model
+            push!(same_but_model, (other[1], p.model))
+        else
+            seen_nomodel[k_nomodel] = (p.model, e.id)
+        end
 
         any(isempty, (p.model, p.symmetry, p.algorithm)) && problem("$what: empty model/symmetry/algorithm")
         (p.chi > 0 && p.K > 0) || problem("$what: χ and K must be positive")
@@ -75,6 +87,11 @@ for path in shards
         global n_dims += nd
         nd == 0 && (no_dims[(p.model, p.symmetry, p.algorithm)] = get(no_dims, (p.model, p.symmetry, p.algorithm), 0) + 1)
     end
+end
+
+for ((a, b), n) in sort!(collect(Dict(p => count(==(p), same_but_model) for p in unique(same_but_model))))
+    problem("$n run(s) stored under both model $(repr(a)) and $(repr(b)) (same file, same parameters): " *
+            "delete one copy with delete_runs!, e.g. delete_runs!(query_runs(model=$(repr(a))))")
 end
 
 for ((m, s, a), n) in sort!(collect(no_dims))

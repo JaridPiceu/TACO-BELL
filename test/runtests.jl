@@ -309,6 +309,39 @@ using TACOBELL
         end
     end
 
+    @testset "delete_runs!, and correct_field! refusing to create duplicates" begin
+        mktempdir() do tmp
+            mk(model, mu) = (RunParameters(model=model, symmetry="O(2)", algorithm="LoopTNR",
+                                           chi=8, K=4, mu0_sq=mu, lambda=0.5),
+                             [CFTResults(iteration=0, central_charge=1.0,
+                                         sectors=[ScalingDimSector(charge=Dict("j"=>0.0, "s"=>0.0), dims=[0.0, 1.0])])])
+            # the same runs stored under a misspelled and the correct model name
+            insert_runs!([DatabaseEntry(params=p, iterations=it) for (p, it) in (mk("Complex_phi4", -0.1), mk("Complex_phi4", -0.2))]; db_path=tmp)
+            good = [insert_run!(mk("phi4_complex", mu)...; db_path=tmp) for mu in (-0.1, -0.3)]
+
+            # renaming would turn the μ₀²=-0.1 pair into duplicates: refuse, change nothing
+            err = try correct_field!(:model, "Complex_phi4", "phi4_complex"; db_path=tmp); nothing catch e; e end
+            @test err isa ErrorException && occursin("1 run(s)", err.msg) && occursin("delete_runs!", err.msg)
+            @test length(query_runs(; db_path=tmp, model="Complex_phi4")) == 2
+
+            # remove the duplicated copy, after which the rename goes through
+            dup = query_runs(; db_path=tmp, model="Complex_phi4", mu0_sq=-0.1)
+            @test delete_runs!(dup; db_path=tmp) == 1
+            @test correct_field!(:model, "Complex_phi4", "phi4_complex"; db_path=tmp) == 1
+            @test sort([e.params.mu0_sq for e in query_runs(; db_path=tmp)]) == [-0.3, -0.2, -0.1]
+            @test load_entry(good[1].id; db_path=tmp).iterations[1].dims == [0.0, 1.0]   # untouched
+
+            # unknown ids: error, nothing deleted; an emptied shard file is removed
+            @test_throws ErrorException delete_runs!(["not-an-id", good[1].id]; db_path=tmp)
+            @test length(query_runs(; db_path=tmp)) == 3
+            n_shards = length(TACOBELL._shard_files(tmp))
+            @test delete_runs!([good[2].id]; db_path=tmp) == 1          # sole run in its shard
+            @test length(TACOBELL._shard_files(tmp)) == n_shards - 1
+            @test occursin("2 run(s)", read(joinpath(tmp, "CATALOG.md"), String))
+            @test delete_runs!(String[]; db_path=tmp) == 0
+        end
+    end
+
     # ── reading real TNRKit output (test/fixtures/, see its README) ─────────
 
     FIX = joinpath(@__DIR__, "fixtures")
@@ -406,6 +439,10 @@ using TACOBELL
             e = only(query_runs(; db_path=db))
             @test (e.params.symmetry, e.params.algorithm, e.params.chi) == ("O(2)", "LoopTNR", 30)
             @test add_data!(fix("new_format_O2.jld2"), "phi4_complex"; db_path=db).skipped == 1
+
+            # a model name the database doesn't know yet is flagged (likely a misspelling)
+            @test_logs (:warn, r"\"Complex_phi4\" is new to this database \(existing: phi4_complex\)") match_mode=:any add_data!(
+                fix("new_format_O2.jld2"), "Complex_phi4"; db_path=db)
         end
 
         # a folder mixing both layouts and models; keywords fill in what old files lack
@@ -453,6 +490,22 @@ using TACOBELL
             e = only(query_runs(; db_path=db))
             @test e.params == RunParameters(model="model_from_function", symmetry="Trivial", algorithm="BTRG",
                                             chi=99, K=30, mu0_sq=-0.72128, lambda=0.25)
+        end
+
+        # runs from *_PARTIAL files are kept but tagged
+        mktempdir() do data
+            mktempdir() do db
+                cp(fix("new_format_O2.jld2"), joinpath(data, "run_iter60_PARTIAL.jld2"))
+                cp(fix("new_format_Trivial.jld2"), joinpath(data, "complete.jld2"))
+                add_data!(data, "phi4"; db_path=db)
+                part = only(query_runs(; db_path=db, symmetry="O(2)"))
+                full = only(query_runs(; db_path=db, symmetry="Trivial"))
+                @test is_partial(part) && !is_partial(full)
+                @test occursin("partial run", part.iterations[end].notes)
+                @test all(isempty(r.notes) for r in part.iterations[1:end-1])
+                @test length(part.iterations) == 26                    # data itself unchanged
+                @test only(filter(!is_partial, query_runs(; db_path=db))).id == full.id
+            end
         end
 
         # old layout with labelled sectors: symmetry inferred from the labels

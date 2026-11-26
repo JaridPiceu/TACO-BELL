@@ -27,11 +27,11 @@ import Zlib_jll
 
 export RunParameters, ScalingDimSector, CFTResults, DatabaseEntry
 export insert_run!, insert_runs!, query_runs, load_entry, get_iteration, final_iteration, summarize_db
-export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!, correct_field!
+export find_closest, find_sector, list_algorithms, list_symmetries, rebuild_index!, correct_field!, delete_runs!
 export ingest_jld2!, ingest_directory!, generate_catalog, export_csv, export_json, export_json_runs
 export export_web, compact!, import_toml_runs!
 export ingest_jld2_old!, ingest_directory_old!
-export add_data!, MissingParameterError
+export add_data!, MissingParameterError, is_partial
 export central_charge_trajectory, plateau_estimate, plateau_central_charge
 export plot_central_charge
 
@@ -446,10 +446,33 @@ function _read_jld2(filepath::String, params::RunParameters)
             ))
         end
 
-        DatabaseEntry(params = filled_params, iterations = iters,
+        DatabaseEntry(params = filled_params, iterations = _tag_partial(iters, filepath),
                       source_file = basename(filepath), runtime_s = t)
     end
 end
+
+const PARTIAL_NOTE = "partial run: stopped before its planned number of iterations"
+
+# A run whose output file is marked `_PARTIAL` stopped early (crash, time
+# limit). Its data is kept, but its last iteration carries PARTIAL_NOTE so it
+# can be told apart (see `is_partial`).
+function _tag_partial(iters::Vector{CFTResults}, filepath::AbstractString)
+    (isempty(iters) || !occursin("partial", lowercase(basename(filepath)))) && return iters
+    r = iters[end]
+    notes = isempty(r.notes) ? PARTIAL_NOTE : r.notes * "; " * PARTIAL_NOTE
+    return [iters[1:end-1]; CFTResults(iteration = r.iteration, normalization = r.normalization,
+                                       central_charge = r.central_charge, sectors = r.sectors, notes = notes)]
+end
+
+"""
+    is_partial(entry::DatabaseEntry) -> Bool
+
+Whether the run stopped before its planned number of iterations (its TNRKit
+output file was marked `_PARTIAL`). Such runs are kept, but can be too short
+for a reliable plateau; leave them out with
+`filter(!is_partial, query_runs(...))`.
+"""
+is_partial(entry::DatabaseEntry) = any(r -> occursin(PARTIAL_NOTE, r.notes), entry.iterations)
 
 # HDF5.jl reads compound HDF5 records back as `NamedTuple`s (or, for
 # built-in compound layouts like complex numbers, as `Complex`) rather than
@@ -697,7 +720,7 @@ function _read_jld2_old(filepath::String, params::RunParameters)
             ))
         end
 
-        DatabaseEntry(params = filled_params, iterations = iters,
+        DatabaseEntry(params = filled_params, iterations = _tag_partial(iters, filepath),
                       source_file = basename(filepath), runtime_s = t)
     end
 end
@@ -836,7 +859,20 @@ function add_data!(
     )
     overrides = (; symmetry, algorithm, chi, K, mu0_sq, lambda)
     infer = model isa AbstractString ? (_ -> String(model)) : model
-    reader(fp, m) = _read_any(fp, m, overrides)
+
+    # A model name the database doesn't know yet is usually a naming slip
+    # ("Complex_phi4" for "phi4_complex"), and it silently splits the data,
+    # duplicating runs already stored under the usual name: say so, once.
+    known = Set(r["model"] for r in _load_index(db_path))
+    warned = Set{String}()
+    function reader(fp, m)
+        if m isa AbstractString && !isempty(known) && !(m in known) && !(m in warned)
+            push!(warned, m)
+            @warn "Model name $(repr(m)) is new to this database (existing: $(join(sort!(collect(known)), ", "))). " *
+                  "If that's a different spelling of an existing model, stop now and use that name instead."
+        end
+        _read_any(fp, m, overrides)
+    end
     _ingest_directory_generic!(reader, String(path); infer_params = infer, db_path, extension, allow_duplicate)
 end
 
@@ -1256,6 +1292,11 @@ files holding affected runs are rewritten (keeping their scaling-dimension
 precision); `db/CATALOG.md` is regenerated afterward if anything changed.
 Returns the number of entries fixed.
 
+Refuses (changing nothing) if a renamed run would end up with exactly the
+same parameters as a run already stored under the new value, e.g. when the
+same files were also added under the correct name. Remove one copy first
+with [`delete_runs!`](@ref).
+
 # Example
 ```julia
 correct_field!(:model, "phi_complex", "phi4_complex")
@@ -1265,8 +1306,16 @@ function correct_field!(field::Symbol, old, new; db_path::String = DB_PATH())
     field in (:model, :symmetry, :algorithm) ||
         error("correct_field! only supports :model, :symmetry, or :algorithm, got :$field")
 
+    idx = _load_index(db_path)
+    renamed(row) = _param_key(merge(row, Dict(String(field) => new)))
+    existing = Set(_param_key(r) for r in idx if r[String(field)] != old)
+    clashes = count(r -> r[String(field)] == old && renamed(r) in existing, idx)
+    clashes == 0 || error("correct_field!: $clashes run(s) with $field=$(repr(old)) already have a twin with ",
+        "$field=$(repr(new)) and otherwise identical parameters; renaming would duplicate them. ",
+        "Remove one copy first with delete_runs! (nothing was changed).")
+
     n = 0
-    affected = unique(row["_shard"] for row in _load_index(db_path) if row[String(field)] == old)
+    affected = unique(row["_shard"] for row in idx if row[String(field)] == old)
     for path in affected
         T = _shard_dims_type(path)
         entries = map(_read_shard(path)) do entry
@@ -1287,6 +1336,44 @@ function correct_field!(field::Symbol, old, new; db_path::String = DB_PATH())
     n > 0 && generate_catalog(; db_path)
     @info "correct_field!" field old new fixed=n
     return n
+end
+
+"""
+    delete_runs!(ids; db_path) -> Int
+    delete_runs!(entries::Vector{DatabaseEntry}; db_path) -> Int
+
+Permanently remove runs from the database, by id (full ids, as in `entry.id`)
+or as a [`query_runs`](@ref) result. The shard files holding them are
+rewritten without them (keeping their scaling-dimension precision); a shard
+left empty is deleted. `db/CATALOG.md` is regenerated. Unknown ids are an
+error and nothing is deleted. Returns the number of runs removed.
+
+Committed data can always be recovered from git history.
+
+# Example
+```julia
+delete_runs!(query_runs(model="Complex_phi4"))
+```
+"""
+delete_runs!(entries::Vector{DatabaseEntry}; db_path::String = DB_PATH()) =
+    delete_runs!([e.id for e in entries]; db_path)
+
+function delete_runs!(ids::AbstractVector{<:AbstractString}; db_path::String = DB_PATH())
+    todo = Set{String}(ids)
+    isempty(todo) && return 0
+    rows = filter(r -> r["id"] in todo, _load_index(db_path))
+    missing_ids = setdiff(todo, Set(r["id"] for r in rows))
+    isempty(missing_ids) || error("delete_runs!: $(length(missing_ids)) id(s) not in the database, e.g. ",
+        "$(first(missing_ids)) (nothing was deleted)")
+
+    for path in unique(r["_shard"] for r in rows)
+        T = _shard_dims_type(path)
+        keep = filter(e -> !(e.id in todo), _read_shard(path))
+        isempty(keep) ? rm(path) : _write_shard(path, keep; dims_type = T)
+    end
+    generate_catalog(; db_path)
+    @info "delete_runs!" deleted = length(rows)
+    return length(rows)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────

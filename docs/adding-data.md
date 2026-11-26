@@ -46,6 +46,8 @@ add_data!("path/to/data/dir", "phi4_complex")
 ```
 
 Old and new TNRKit files are both recognized, even mixed in one folder.
+Files whose name contains `_PARTIAL` (runs that stopped early) are added
+too, tagged so they can be filtered out with `is_partial`.
 Files already in the database are skipped, so it's safe to re-run on a
 folder you've added to. A broken file is logged and skipped without stopping
 the rest.
@@ -117,6 +119,18 @@ A typo in a model, symmetry or algorithm name across many runs:
 ```julia
 correct_field!(:model, "phi_complex", "phi4_complex")
 ```
+
+`add_data!` warns when you use a model name the database doesn't have yet,
+since a different spelling of an existing model splits its data in two. If
+it happened anyway and the same runs now exist under both names,
+`correct_field!` refuses (it would create duplicates). Delete one copy
+instead:
+
+```julia
+delete_runs!(query_runs(model="Complex_phi4"))
+```
+
+`scripts/check_db.jl` reports such duplicates.
 
 ## Tips
 

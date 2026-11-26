@@ -2,18 +2,24 @@
 
 # TACO-BELL catalog
 
-17938 run(s) in 40 setup(s), stored in 11 shard file(s) under `shards/`.
+38366 run(s) in 54 setup(s), stored in 33 shard file(s) under `shards/`.
 
 | model | symmetry | algorithm | χ | K | runs | λ | μ₀² range |
 |---|---|---|---|---|---|---|---|
-| Complex_phi4 | O(2) | LoopTNR | 30 | 12 | 670 | 20 values in [0.005, 1] | -1.897 … -0.017 |
-| Complex_phi4 | O(2) | LoopTNR | 40 | 10 | 740 | 20 values in [0.005, 1] | -1.897 … -0.016 |
-| Complex_phi4 | O(2) | LoopTNR | 40 | 12 | 670 | 20 values in [0.005, 1] | -1.897 … -0.017 |
-| Real_phi4 | Z2 | LoopTNR | 40 | 20 | 330 | 20 values in [0.005, 1] | -1.2725 … -0.0128 |
+| phi4_complex | O(2) | LoopTNR | 30 | 12 | 670 | 20 values in [0.005, 1] | -1.897 … -0.017 |
 | phi4_complex | O(2) | LoopTNR | 30 | 14 | 576 | 20 values in [0.005, 1] | -1.9 … 0 |
 | phi4_complex | O(2) | LoopTNR | 32 | 12 | 16 | 0.5 | -2 … -0.5 |
-| phi4_complex | O(2) | LoopTNR | 40 | 12 | 607 | 20 values in [0.005, 1] | -1.9 … 0 |
+| phi4_complex | O(2) | LoopTNR | 35 | 10 | 2008 | 20 values in [0.005, 1] | -1.898 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 35 | 12 | 1574 | 20 values in [0.005, 1] | -1.898 … -0.01755 |
+| phi4_complex | O(2) | LoopTNR | 40 | 10 | 2033 | 20 values in [0.005, 1] | -1.898 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 40 | 12 | 2173 | 20 values in [0.005, 1] | -1.9 … 0 |
 | phi4_complex | O(2) | LoopTNR | 40 | 14 | 507 | 20 values in [0.005, 1] | -1.9 … 0 |
+| phi4_complex | O(2) | LoopTNR | 45 | 10 | 2014 | 20 values in [0.005, 1] | -1.898 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 45 | 12 | 1839 | 20 values in [0.005, 1] | -1.898 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 50 | 10 | 2005 | 20 values in [0.005, 1] | -1.898 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 50 | 12 | 1947 | 20 values in [0.005, 1] | -1.898 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 55 | 10 | 646 | 16 values in [0.005, 0.6] | -1.23595 … -0.016 |
+| phi4_complex | O(2) | LoopTNR | 55 | 12 | 155 | 10 values in [0.005, 0.25] | -0.58355 … -0.016 |
 | phi4_complex | U(1) | LoopTNR | 6 | 4 | 21 | 21 values in [0, 1] | -1 … -1 |
 | phi4_complex | U(1) | LoopTNR | 8 | 8 | 16 | 0.02 | -0.15 … 0 |
 | phi4_complex | U(1) | LoopTNR | 10 | 10 | 27 | 0.1, 1 | -1.95 … -0.2 |
@@ -34,6 +40,13 @@
 | phi4_complex | U(1) | LoopTNR | 64 | 6 | 182 | 12 values in [0.01, 1] | -1.95 … 0 |
 | phi4_complex | U(1) | LoopTNR | 64 | 8 | 100 | 9 values in [0.01, 1] | -1.95 … 0 |
 | phi4_complex | U(1) | LoopTNR | 64 | 10 | 372 | 21 values in [0, 1] | -1.55 … 1 |
+| phi4_real | Trivial | LoopTNR | 30 | 40 | 1214 | 20 values in [0.005, 1] | -1.2725 … -0.0128 |
+| phi4_real | Trivial | LoopTNR | 35 | 40 | 1000 | 20 values in [0.005, 1] | -1.27249 … -0.0128 |
+| phi4_real | Trivial | LoopTNR | 40 | 30 | 330 | 20 values in [0.005, 1] | -1.2725 … -0.0128 |
+| phi4_real | Trivial | LoopTNR | 40 | 40 | 1214 | 20 values in [0.005, 1] | -1.2725 … -0.0128 |
+| phi4_real | Trivial | LoopTNR | 45 | 20 | 1000 | 20 values in [0.005, 1] | -1.27249 … -0.0128 |
+| phi4_real | Trivial | LoopTNR | 45 | 25 | 1000 | 20 values in [0.005, 1] | -1.27249 … -0.0128 |
+| phi4_real | Trivial | LoopTNR | 45 | 30 | 293 | 8 values in [0.35, 1] | -1.27249 … -0.5359 |
 | phi4_real | Z2 | LoopTNR | 16 | 10 | 229 | 14 values in [0.01, 1] | -1.35 … 0 |
 | phi4_real | Z2 | LoopTNR | 16 | 20 | 692 | 24 values in [0, 1] | -3 … 1 |
 | phi4_real | Z2 | LoopTNR | 32 | 10 | 229 | 14 values in [0.01, 1] | -1.35 … 0 |
@@ -41,6 +54,7 @@
 | phi4_real | Z2 | LoopTNR | 32 | 16 | 105 | 0.6, 0.7, 0.8, 0.9, 1 | -1.28 … -0.83 |
 | phi4_real | Z2 | LoopTNR | 32 | 20 | 878 | 27 values in [0, 1] | -3 … 1 |
 | phi4_real | Z2 | LoopTNR | 32 | 40 | 340 | 20 values in [0.005, 1] | -1.273 … -0.012 |
+| phi4_real | Z2 | LoopTNR | 40 | 20 | 330 | 20 values in [0.005, 1] | -1.2725 … -0.0128 |
 | phi4_real | Z2 | LoopTNR | 48 | 10 | 229 | 14 values in [0.01, 1] | -1.35 … 0 |
 | phi4_real | Z2 | LoopTNR | 48 | 12 | 105 | 0.6, 0.7, 0.8, 0.9, 1 | -1.28 … -0.83 |
 | phi4_real | Z2 | LoopTNR | 48 | 16 | 105 | 0.6, 0.7, 0.8, 0.9, 1 | -1.28 … -0.83 |
